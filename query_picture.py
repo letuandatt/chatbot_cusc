@@ -71,7 +71,7 @@ def describe_image(image_path, user_prompt=None):
 
 
 if __name__ == '__main__':
-    image_path = "C:\\Users\\LE TUAN DAT\\Pictures\\Screenshots\\Screenshot 2024-12-02 143235.png"
+    image_path = "C:\\Users\\LE TUAN DAT\\Pictures\\Screenshots\\Screenshot 2025-01-05 110156.png"
 
     # ✅ TH1: mô tả chung (không có prompt người dùng)
     print("=== Mô tả ảnh chung ===")

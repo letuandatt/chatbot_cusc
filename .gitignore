@@ -4,3 +4,4 @@ data
 .env
 .idea
 vectorstores
+task.txt
