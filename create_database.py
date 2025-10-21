@@ -12,7 +12,7 @@ import re
 
 load_dotenv()
 
-def create_data(CHROMA_PATH="vectorstores/chroma_db_1", google_api_key=os.getenv("GOOGLE_API_KEY")):
+def create_data(CHROMA_PATH="vectorstores/chroma_db_2", google_api_key=os.getenv("GOOGLE_API_KEY")):
     data = "data/after_parse"
 
     def main():
@@ -67,13 +67,25 @@ def create_data(CHROMA_PATH="vectorstores/chroma_db_1", google_api_key=os.getenv
         for document in documents:
             header_chunks = header_splitter.split_text(document.page_content)
 
+            base_metadata = document.metadata.copy()
+
             total_chunks_for_doc = []
             for header_chunk in header_chunks:
-                text_chunk = header_chunk.page_content if isinstance(header_chunk, Document) else str(header_chunk)
+
+                # 1. Tạo metadata mới bằng cách kết hợp
+                chunk_metadata = base_metadata.copy()
+                if isinstance(header_chunk, Document):
+                    chunk_metadata.update(header_chunk.metadata)
+                    text_chunk = header_chunk.page_content
+                else:
+                    text_chunk = str(header_chunk)
+
+                # 2. Split ngữ nghĩa
                 semantic_chunks = semantic_splitter.split_text(text_chunk)
 
+                # 3. Gán metadata đã được kết hợp
                 for sc in semantic_chunks:
-                    total_chunks_for_doc.append(Document(page_content=sc, metadata=document.metadata))
+                    total_chunks_for_doc.append(Document(page_content=sc, metadata=chunk_metadata))
 
             print(f"🪶 {document.metadata['ten_van_ban']} → Split thành {len(total_chunks_for_doc)} chunks.")
             all_chunks.extend(total_chunks_for_doc)
