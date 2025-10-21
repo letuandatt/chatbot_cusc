@@ -1,6 +1,5 @@
 data
 .venv
-*.txt
 .env
 .idea
 vectorstores
