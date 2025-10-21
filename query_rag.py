@@ -1,20 +1,19 @@
 import os
 import io
 import base64
+import config
 
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import CohereRerank
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain.prompts import PromptTemplate
-from dotenv import load_dotenv
 from PIL import Image
-
-# Tải các biến môi trường từ file .env
-load_dotenv()
 
 
 # --- CÁC HÀM TIỆN ÍCH VÀ CẤU HÌNH ---
@@ -34,13 +33,13 @@ def image_to_base64(image_path):
         return None
 
 
-def initialize_llm():
+def initialize_llm(model_name, temperature):
     """Khởi tạo mô hình ngôn ngữ lớn (LLM)."""
     # Sử dụng model hỗ trợ cả text và image
     return ChatGoogleGenerativeAI(
-        model="gemini-2.5-pro",
-        temperature=0.1,  # Tăng nhẹ để câu trả lời tự nhiên hơn
-        google_api_key=os.getenv("GOOGLE_API_KEY")
+        model=model_name,
+        temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơn
+        google_api_key=config.GOOGLE_API_KEY
     )
 
 
@@ -54,8 +53,11 @@ Mỗi chunk context sẽ có metadata như: Tên văn bản (ten_van_ban), Mã h
 
 Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc:
 - Dùng gạch đầu dòng (-) hoặc đánh số nếu có nhiều thông tin.
-- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata])". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
+- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata](, mục: [section từ metadata] nếu có))". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
 - Không được bịa đặt câu trả lời, chỉ dựa vào ngữ cảnh được cung cấp. Nếu không tìm thấy thông tin phù hợp, hãy ghi "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
+
+Lịch sử trò chuyện:
+{chat_history}
 
 Ngữ cảnh:
 {context}
@@ -65,30 +67,42 @@ Câu hỏi: {question}
 Câu trả lời chi tiết:
 """
 
+# Giải pháp tạm thời (Sẽ integrate MongoDB soon)
+message_history_store = {}
 
-def handle_text_query(llm, query_text):
+def get_session_history(session_id: str):
+    """Lấy lịch sử chat cho một session."""
+    if session_id not in message_history_store:
+        message_history_store[session_id] = InMemoryChatMessageHistory()
+    return message_history_store[session_id]
+
+def handle_text_query(llm, query_text, session_id="default_session"):
     """Xử lý câu hỏi chỉ có văn bản bằng pipeline RAG."""
     print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
 
     # 1. Khởi tạo embedding model
     embedding_model = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=os.getenv("GOOGLE_API_KEY")
+        model=config.EMBEDDING_MODEL_NAME,
+        google_api_key=config.GOOGLE_API_KEY
     )
 
     # 2. Khởi tạo Chroma DB
     db = Chroma(
-        persist_directory="vectorstores/chroma_db_1",
+        persist_directory=config.VECTORSTORE_PATH,
         embedding_function=embedding_model,
-        collection_name="docs_cusc"
+        collection_name=config.COLLECTION_NAME
     )
 
     # 3. Thiết lập Retriever và Reranker
-    base_retriever = db.as_retriever(search_kwargs={"k": 40})
+    base_retriever = db.as_retriever(
+        search_kwargs={
+            "k": config.RAG_RETRIEVER_K
+        }
+    )
     base_compressor = CohereRerank(
-        top_n=6,  # Giữ lại 5 kết quả relevant nhất
-        model="rerank-multilingual-v3.0",
-        cohere_api_key=os.getenv("COHERE_API_KEY")
+        top_n=config.RAG_RERANKER_TOP_N,  # Giữ lại 5 kết quả relevant nhất
+        model=config.RERANK_MODEL_NAME,
+        cohere_api_key=config.COHERE_API_KEY
     )
     retriever = ContextualCompressionRetriever(
         base_compressor=base_compressor,
@@ -104,19 +118,34 @@ def handle_text_query(llm, query_text):
 
     # 4. Xây dựng và thực thi chuỗi RAG
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
-    rag_chain = (
-        {"context": lambda x: format_docs(retriever.invoke(x)), "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
+    base_rag_chain = (
+            {"context": lambda x: format_docs(retriever.invoke(x["question"])),
+             "question": lambda x: x["question"],
+             "chat_history": lambda x: x.get("chat_history", [])}  # Lấy history
+            | prompt
+            | llm
+            | StrOutputParser()
+    )
+
+    # Bọc chuỗi RAG bằng RunnableWithMessageHistory
+    rag_chain_with_history = RunnableWithMessageHistory(
+        base_rag_chain,
+        get_session_history,
+        input_messages_key="question",
+        history_messages_key="chat_history",
     )
 
     # 5. Stream kết quả
     full_response = ""
-    for chunk in rag_chain.stream(query_text):
+    config_ = {"configurable": {"session_id": session_id}}  # Truyền session_id vào
+
+    # Input cho chain bây giờ là một dict
+    input_data = {"question": query_text}
+
+    for chunk in rag_chain_with_history.stream(input_data, config=config_):
         full_response += chunk
         print(chunk, end="", flush=True)
-    print("\n")  # In dòng mới sau khi kết thúc
+    print("\n")
 
 
 # --- LOGIC XỬ LÝ QUERY ĐA PHƯƠNG THỨC (TEXT + IMAGE) ---
@@ -125,52 +154,110 @@ PROMPT_TEMPLATE_VISION = """
 Bạn là một trợ lý AI thông minh. Dựa vào hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
 Trả lời bằng tiếng Việt.
 
+Lịch sử trò chuyện: {chat_history}
+
 Câu hỏi: {question}
 
 Câu trả lời:
 """
 
-
-def handle_multimodal_query(llm, query_text, image_path):
+def handle_multimodal_query(llm, query_text, image_path, session_id="default_session"):
     """Xử lý câu hỏi có cả văn bản và hình ảnh."""
     print(f"--- 🖼️ Đang xử lý câu hỏi với ảnh: {os.path.basename(image_path)} ---")
 
-    # 1. Chuẩn bị dữ liệu ảnh
-    image_base64 = image_to_base64(image_path)
-    if not image_base64:
-        print("Không thể xử lý ảnh. Vui lòng kiểm tra lại đường dẫn hoặc định dạng file.")
-        return
+    # 1. Nhận dict (từ chain) và trả về list[HumanMessage] cho LLM
+    def _format_vision_message(input_dict: dict) -> list:
+        history = input_dict.get("chat_history", [])
+        question = input_dict["question"]
+        img_path = input_dict["image_path"]
 
-    image_data = {
-        "type": "image_url",
-        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-    }
+        prompt_text = PROMPT_TEMPLATE_VISION.format(
+            question=question,
+            chat_history=history
+        )
 
-    # 2. Tạo prompt
-    prompt_text = PROMPT_TEMPLATE_VISION.format(question=query_text)
+        image_base64 = image_to_base64(img_path) # <-- Sửa lỗi logic nhỏ: dùng img_path
+        if not image_base64:
+            return [HumanMessage(content="Lỗi: Không thể xử lý ảnh.")]
 
-    # 3. Tạo message và gọi LLM
-    message = HumanMessage(
-        content=[
-            {"type": "text", "text": prompt_text},
-            image_data
+        image_data = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        }
+
+        return [
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt_text},
+                    image_data
+                ]
+            )
         ]
+
+    def _format_history_input(input_dict: dict) -> HumanMessage:
+        question = input_dict["question"]
+        img_path = input_dict["image_path"]
+
+        image_base64 = image_to_base64(img_path)
+        if not image_base64:
+            return HumanMessage(content=f"(Lỗi ảnh) {question}")
+
+        image_data = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        }
+
+        # Trả về 1 HumanMessage duy nhất chứa CẢ text và ảnh
+        return HumanMessage(
+            content=[
+                {"type": "text", "text": question},
+                image_data
+            ]
+        )
+
+    # 2. Build chain
+    base_vision_chain = (
+        RunnablePassthrough()
+        | RunnableLambda(_format_vision_message)
+        | llm
     )
 
-    # 4. Stream kết quả
+    # 3. Bọc Chain cơ sở bằng Bộ nhớ
+    vision_chain_with_history = RunnableWithMessageHistory(
+        base_vision_chain,
+        get_session_history,
+        input_messages_key="question",
+        input_messages_key_fx=RunnableLambda(_format_history_input),
+        history_messages_key="chat_history",
+    )
+
+    # 4. Chuẩn bị Input và Config
+    input_data = {
+        "question": query_text,
+        "image_path": image_path
+    }
+
+    config_ = {"configurable": {"session_id": session_id}}
+
+    # 5. Stream kết quả
     full_response = ""
-    for chunk in llm.stream([message]):
+    for chunk in vision_chain_with_history.stream(input_data, config=config_):
+        # chunk bây giờ là AIMessageChunk, cần .content
         content = chunk.content
         full_response += content
         print(content, end="", flush=True)
-    print("\n")  # In dòng mới sau khi kết thúc
+    print("\n")
 
 
 # --- HÀM CHÍNH ĐIỀU PHỐI ---
 
 def main():
     """Hàm chính để chạy chatbot."""
-    llm = initialize_llm()
+    text_llm = initialize_llm(config.TEXT_MODEL_NAME, temperature=0.1)
+    vision_llm = initialize_llm(config.VISION_MODEL_NAME, temperature=0.1)
+
+    session_id = "user_123_test"
+
     print("🤖 Chatbot CUSC đã sẵn sàng. Nhập 'exit' để thoát.")
 
     while True:
@@ -186,13 +273,13 @@ def main():
 
         # 3. Điều hướng logic xử lý
         if image_path and os.path.exists(image_path):
-            handle_multimodal_query(llm, query_text, image_path)
+            handle_multimodal_query(vision_llm, query_text, image_path, session_id)
         elif image_path:
             print(f"⚠️ Lỗi: Không tìm thấy file ảnh tại '{image_path}'")
             print(f"Vui lòng xem lại file ảnh!")
             continue
         else:
-            handle_text_query(llm, query_text)
+            handle_text_query(text_llm, query_text, session_id)
 
 
 if __name__ == '__main__':
