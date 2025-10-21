@@ -9,3 +9,5 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+test_query_data.py
+test_query_picture.py
