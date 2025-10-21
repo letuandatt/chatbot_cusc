@@ -5,3 +5,7 @@ data
 .idea
 vectorstores
 task.txt
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
