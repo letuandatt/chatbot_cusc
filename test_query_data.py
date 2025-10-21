@@ -41,15 +41,15 @@ def main():
 
     # Khởi tạo db
     db = Chroma(
-        persist_directory="vectorstores/chroma_db",
+        persist_directory="vectorstores/chroma_db_1",
         embedding_function=embedding_model,
         collection_name="docs_cusc"
     )
 
     # Retriever cơ bản
-    base_retriever = db.as_retriever(search_kwargs={"k": 45})
+    base_retriever = db.as_retriever(search_kwargs={"k": 40})
     base_compressor = CohereRerank(
-        top_n=10,
+        top_n=6,
         model="rerank-multilingual-v3.0",
         cohere_api_key=os.getenv("COHERE_API_KEY")
     )

@@ -39,7 +39,7 @@ def initialize_llm():
     # Sử dụng model hỗ trợ cả text và image
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-pro",
-        temperature=0.2,  # Tăng nhẹ để câu trả lời tự nhiên hơn
+        temperature=0.1,  # Tăng nhẹ để câu trả lời tự nhiên hơn
         google_api_key=os.getenv("GOOGLE_API_KEY")
     )
 
@@ -78,20 +78,20 @@ def handle_text_query(llm, query_text):
 
     # 2. Khởi tạo Chroma DB
     db = Chroma(
-        persist_directory="vectorstores/chroma_db",
+        persist_directory="vectorstores/chroma_db_1",
         embedding_function=embedding_model,
         collection_name="docs_cusc"
     )
 
     # 3. Thiết lập Retriever và Reranker
-    base_retriever = db.as_retriever(search_kwargs={"k": 35})
-    compressor = CohereRerank(
-        top_n=10,  # Giữ lại 5 kết quả relevant nhất
+    base_retriever = db.as_retriever(search_kwargs={"k": 40})
+    base_compressor = CohereRerank(
+        top_n=6,  # Giữ lại 5 kết quả relevant nhất
         model="rerank-multilingual-v3.0",
         cohere_api_key=os.getenv("COHERE_API_KEY")
     )
     retriever = ContextualCompressionRetriever(
-        base_compressor=compressor,
+        base_compressor=base_compressor,
         base_retriever=base_retriever,
     )
 
@@ -104,12 +104,11 @@ def handle_text_query(llm, query_text):
 
     # 4. Xây dựng và thực thi chuỗi RAG
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
-
     rag_chain = (
-            {"context": lambda x: format_docs(retriever.invoke(x)), "question": RunnablePassthrough()}
-            | prompt
-            | llm
-            | StrOutputParser()
+        {"context": lambda x: format_docs(retriever.invoke(x)), "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
     )
 
     # 5. Stream kết quả
@@ -184,12 +183,14 @@ def main():
         image_path = input("🖼️ Nhập đường dẫn ảnh (hoặc nhấn Enter để bỏ qua): ").strip()
 
         print("\n💡 Trả lời:")
+
         # 3. Điều hướng logic xử lý
         if image_path and os.path.exists(image_path):
             handle_multimodal_query(llm, query_text, image_path)
         elif image_path:
-            print(f"⚠️ Lỗi: Không tìm thấy file ảnh tại '{image_path}'. Đang xử lý như câu hỏi văn bản.")
-            handle_text_query(llm, query_text)
+            print(f"⚠️ Lỗi: Không tìm thấy file ảnh tại '{image_path}'")
+            print(f"Vui lòng xem lại file ảnh!")
+            continue
         else:
             handle_text_query(llm, query_text)
 
