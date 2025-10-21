@@ -1,124 +1,286 @@
-from langchain_community.document_loaders import TextLoader
-from langchain_core.documents import Document
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_text_splitters import MarkdownHeaderTextSplitter
-from pathlib import Path
-import re
 import os
+import io
+import base64
+import config
 
-def extract_mahieu_from_filename(filename: str) -> str:
-    """
-    Trích mã hiệu từ tên file.
-    Hỗ trợ các dạng: QT07, TT07.01, TT07.01.I, TT07.10, v.v.
-    """
-    match = re.match(r'^(TT\d{2}(?:\.\d{2})?(?:\.[A-Za-z0-9]+)?|QT\d{2})', filename)
-    return match.group(1) if match else None
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import CohereRerank
+from langchain_chroma import Chroma
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain.prompts import PromptTemplate
+from PIL import Image
 
-def load_documents(file_path: str):
-    loader = TextLoader(file_path)
-    raw_docs = loader.load()
 
-    enriched = []
-    for d in raw_docs:
-        src_path = Path(d.metadata.get("source") or file_path)
-        file_name = src_path.stem
-        ma_hieu = extract_mahieu_from_filename(file_name)
+# --- CÁC HÀM TIỆN ÍCH VÀ CẤU HÌNH ---
 
-        enriched.append(
-            Document(
-                page_content=d.page_content,
-                metadata={
-                    "source": str(src_path),
-                    "ten_van_ban": file_name,
-                    "ma_hieu": ma_hieu
-                }
-            )
-        )
+def image_to_base64(image_path):
+    """Chuyển đổi file ảnh sang chuỗi base64."""
+    try:
+        with Image.open(image_path) as img:
+            # Chuyển đổi ảnh sang RGB để đảm bảo tương thích
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG")  # Lưu dưới dạng JPEG để nhất quán
+            return base64.b64encode(buffered.getvalue()).decode("utf-8")
+    except Exception as e:
+        print(f"Lỗi xử lý ảnh: {e}")
+        return None
 
-    print(f"Loaded {len(enriched)} documents.")
-    return enriched
 
-def split_documents(documents):
-    headers_to_split = [("#", "section"), ("##", "subsection"), ("###", "subsubsection")]
-    splitter = MarkdownHeaderTextSplitter(
-        headers_to_split_on=headers_to_split,
-        return_each_line=False,
-        strip_headers=False
+def initialize_llm(model_name, temperature):
+    """Khởi tạo mô hình ngôn ngữ lớn (LLM)."""
+    # Sử dụng model hỗ trợ cả text và image
+    return ChatGoogleGenerativeAI(
+        model=model_name,
+        temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơn
+        google_api_key=config.GOOGLE_API_KEY
     )
 
-    all_chunks = []
-    for doc in documents:
-        # splitter.split_text có thể trả list of Document-like objects or plain strings
-        md_chunks = splitter.split_text(doc.page_content)
 
-        # Nếu trả strings -> wrap; nếu trả Document-like với metadata -> merge
-        chunks_for_doc = []
-        for i, c in enumerate(md_chunks):
-            if isinstance(c, Document):
-                chunk_text = c.page_content
-                chunk_meta = getattr(c, "metadata", {}) or {}
-            elif hasattr(c, "page_content") and hasattr(c, "metadata"):
-                chunk_text = c.page_content
-                chunk_meta = c.metadata or {}
-            else:
-                # plain string
-                chunk_text = str(c)
-                chunk_meta = {}
+# --- LOGIC XỬ LÝ QUERY VĂN BẢN (RAG) ---
 
-            # merge metadata: chunk_meta overrides doc.metadata if conflict
-            merged_meta = {**doc.metadata, **chunk_meta}
-            # keep origin file identity to detect contamination later
-            merged_meta.setdefault("origin_file", doc.metadata.get("ten_van_ban"))
+PROMPT_TEMPLATE_RAG = """
+Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
 
-            chunk_doc = Document(page_content=chunk_text, metadata=merged_meta)
-            chunks_for_doc.append(chunk_doc)
+Sử dụng những thông tin trong ngữ cảnh bên dưới để trả lời câu hỏi của người dùng một cách chi tiết, chính xác và đầy đủ.
+Mỗi chunk context sẽ có metadata như: Tên văn bản (ten_van_ban), Mã hiệu (ma_hieu).
 
-        print(f"→ {doc.metadata['ten_van_ban']} -> {len(chunks_for_doc)} chunks")
-        all_chunks.extend(chunks_for_doc)
+Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc:
+- Dùng gạch đầu dòng (-) hoặc đánh số nếu có nhiều thông tin.
+- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata])". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
+- Không được bịa đặt câu trả lời, chỉ dựa vào ngữ cảnh được cung cấp. Nếu không tìm thấy thông tin phù hợp, hãy ghi "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
 
-    print(f"Total chunks: {len(all_chunks)}")
-    return all_chunks
+Lịch sử trò chuyện:
+{chat_history}
 
-def inspect_metadata(chunks, top_n=10):
-    print("\n--- Inspect first chunks metadata ---")
-    for i, c in enumerate(chunks[:top_n]):
-        print(f"[{i}] source={c.metadata.get('source')} | ten_van_ban={c.metadata.get('ten_van_ban')} | ma_hieu={c.metadata.get('ma_hieu')}")
+Ngữ cảnh:
+{context}
 
-    # check distinct ma_hieu per origin file
-    mapping = {}
-    for c in chunks:
-        origin = c.metadata.get("ten_van_ban")
-        mh = c.metadata.get("ma_hieu")
-        mapping.setdefault(origin, set()).add(mh)
+Câu hỏi: {question}
 
-    print("\n--- ma_hieu sets by file ---")
-    for origin, s in mapping.items():
-        print(f"{origin}: {s}")
+Câu trả lời chi tiết:
+"""
 
-    # detect if any chunk has ma_hieu that doesn't match origin file (suspicious)
-    suspicious = []
-    for c in chunks:
-        if c.metadata.get("ten_van_ban") and c.metadata.get("ma_hieu") not in (None, ''):
-            if not str(c.metadata.get("ten_van_ban")).startswith(str(c.metadata.get("ma_hieu"))):
-                # loose check: file name should start with ma_hieu in your naming convention
-                suspicious.append((c.metadata.get("ten_van_ban"), c.metadata.get("ma_hieu")))
-    if suspicious:
-        print("\n--- Suspicious chunks (file name doesn't start with ma_hieu) ---")
-        for s in suspicious[:50]:
-            print(s)
-    else:
-        print("\nNo obvious contamination found by simple check.")
+# Giải pháp tạm thời (Sẽ integrate MongoDB soon)
+message_history_store = {}
+
+def get_session_history(session_id: str):
+    """Lấy lịch sử chat cho một session."""
+    if session_id not in message_history_store:
+        message_history_store[session_id] = InMemoryChatMessageHistory()
+    return message_history_store[session_id]
+
+def handle_text_query(llm, query_text, session_id="default_session"):
+    """Xử lý câu hỏi chỉ có văn bản bằng pipeline RAG."""
+    print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
+
+    # 1. Khởi tạo embedding model
+    embedding_model = GoogleGenerativeAIEmbeddings(
+        model=config.EMBEDDING_MODEL_NAME,
+        google_api_key=config.GOOGLE_API_KEY
+    )
+
+    # 2. Khởi tạo Chroma DB
+    db = Chroma(
+        persist_directory=config.VECTORSTORE_PATH,
+        embedding_function=embedding_model,
+        collection_name=config.COLLECTION_NAME
+    )
+
+    # 3. Thiết lập Retriever và Reranker
+    base_retriever = db.as_retriever(
+        search_kwargs={
+            "k": config.RAG_RETRIEVER_K
+        }
+    )
+    base_compressor = CohereRerank(
+        top_n=config.RAG_RERANKER_TOP_N,  # Giữ lại 5 kết quả relevant nhất
+        model=config.RERANK_MODEL_NAME,
+        cohere_api_key=config.COHERE_API_KEY
+    )
+    retriever = ContextualCompressionRetriever(
+        base_compressor=base_compressor,
+        base_retriever=base_retriever,
+    )
+
+    def format_docs(docs):
+        return "\n\n".join([
+            f"Nội dung Chunk: {doc.page_content}\n"
+            f"Metadata: (Tên văn bản: {doc.metadata.get('ten_van_ban', 'N/A')}, Mã hiệu: {doc.metadata.get('ma_hieu', 'N/A')})"
+            for doc in docs
+        ])
+
+    # 4. Xây dựng và thực thi chuỗi RAG
+    prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
+    base_rag_chain = (
+            {"context": lambda x: format_docs(retriever.invoke(x["question"])),
+             "question": lambda x: x["question"],
+             "chat_history": lambda x: x.get("chat_history", [])}  # Lấy history
+            | prompt
+            | llm
+            | StrOutputParser()
+    )
+
+    # Bọc chuỗi RAG bằng RunnableWithMessageHistory
+    rag_chain_with_history = RunnableWithMessageHistory(
+        base_rag_chain,
+        get_session_history,
+        input_messages_key="question",
+        history_messages_key="chat_history",
+    )
+
+    # 5. Stream kết quả
+    full_response = ""
+    config_ = {"configurable": {"session_id": session_id}}  # Truyền session_id vào
+
+    # Input cho chain bây giờ là một dict
+    input_data = {"question": query_text}
+
+    for chunk in rag_chain_with_history.stream(input_data, config=config_):
+        full_response += chunk
+        print(chunk, end="", flush=True)
+    print("\n")
 
 
-if __name__ == "__main__":
-    # thay đường dẫn phù hợp
-    fp = "data/after_parse/TT07.01.I - Kinh doanh phan mem v2.0.md"
-    if not os.path.exists(fp):
-        raise SystemExit(f"File not found: {fp}")
+# --- LOGIC XỬ LÝ QUERY ĐA PHƯƠNG THỨC (TEXT + IMAGE) ---
 
-    docs = load_documents(fp)
-    chunks = split_documents(docs)
-    inspect_metadata(chunks, top_n=20)
+PROMPT_TEMPLATE_VISION = """
+Bạn là một trợ lý AI thông minh. Dựa vào hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
+Trả lời bằng tiếng Việt.
 
-    for chunk in chunks[:10]:
-        print(chunk)
+Lịch sử trò chuyện: {chat_history}
+
+Câu hỏi: {question}
+
+Câu trả lời:
+"""
+
+def handle_multimodal_query(llm, query_text, image_path, session_id="default_session"):
+    """Xử lý câu hỏi có cả văn bản và hình ảnh."""
+    print(f"--- 🖼️ Đang xử lý câu hỏi với ảnh: {os.path.basename(image_path)} ---")
+
+    # 1. Nhận dict (từ chain) và trả về list[HumanMessage] cho LLM
+    def _format_vision_message(input_dict: dict) -> list:
+        history = input_dict.get("chat_history", [])
+        question = input_dict["question"]
+        img_path = input_dict["image_path"]
+
+        prompt_text = PROMPT_TEMPLATE_VISION.format(
+            question=question,
+            chat_history=history
+        )
+
+        image_base64 = image_to_base64(img_path) # <-- Sửa lỗi logic nhỏ: dùng img_path
+        if not image_base64:
+            return [HumanMessage(content="Lỗi: Không thể xử lý ảnh.")]
+
+        image_data = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        }
+
+        return [
+            HumanMessage(
+                content=[
+                    {"type": "text", "text": prompt_text},
+                    image_data
+                ]
+            )
+        ]
+
+    def _format_history_input(input_dict: dict) -> HumanMessage:
+        question = input_dict["question"]
+        img_path = input_dict["image_path"]
+
+        image_base64 = image_to_base64(img_path)
+        if not image_base64:
+            return HumanMessage(content=f"(Lỗi ảnh) {question}")
+
+        image_data = {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+        }
+
+        # Trả về 1 HumanMessage duy nhất chứa CẢ text và ảnh
+        return HumanMessage(
+            content=[
+                {"type": "text", "text": question},
+                image_data
+            ]
+        )
+
+    # 2. Build chain
+    base_vision_chain = (
+        RunnablePassthrough()
+        | RunnableLambda(_format_vision_message)
+        | llm
+    )
+
+    # 3. Bọc Chain cơ sở bằng Bộ nhớ
+    vision_chain_with_history = RunnableWithMessageHistory(
+        base_vision_chain,
+        get_session_history,
+        input_messages_key="question",
+        input_messages_key_fx=RunnableLambda(_format_history_input),
+        history_messages_key="chat_history",
+    )
+
+    # 4. Chuẩn bị Input và Config
+    input_data = {
+        "question": query_text,
+        "image_path": image_path
+    }
+
+    config_ = {"configurable": {"session_id": session_id}}
+
+    # 5. Stream kết quả
+    full_response = ""
+    for chunk in vision_chain_with_history.stream(input_data, config=config_):
+        # chunk bây giờ là AIMessageChunk, cần .content
+        content = chunk.content
+        full_response += content
+        print(content, end="", flush=True)
+    print("\n")
+
+
+# --- HÀM CHÍNH ĐIỀU PHỐI ---
+
+def main():
+    """Hàm chính để chạy chatbot."""
+    text_llm = initialize_llm(config.TEXT_MODEL_NAME, temperature=0.1)
+    vision_llm = initialize_llm(config.VISION_MODEL_NAME, temperature=0.1)
+
+    session_id = "user_123_test"
+
+    print("🤖 Chatbot CUSC đã sẵn sàng. Nhập 'exit' để thoát.")
+
+    while True:
+        # 1. Nhận câu hỏi từ người dùng
+        query_text = input("\n👤 Bạn hỏi: ")
+        if query_text.lower() == 'exit':
+            break
+
+        # 2. Hỏi đường dẫn ảnh (tùy chọn)
+        image_path = input("🖼️ Nhập đường dẫn ảnh (hoặc nhấn Enter để bỏ qua): ").strip()
+
+        print("\n💡 Trả lời:")
+
+        # 3. Điều hướng logic xử lý
+        if image_path and os.path.exists(image_path):
+            handle_multimodal_query(vision_llm, query_text, image_path, session_id)
+        elif image_path:
+            print(f"⚠️ Lỗi: Không tìm thấy file ảnh tại '{image_path}'")
+            print(f"Vui lòng xem lại file ảnh!")
+            continue
+        else:
+            handle_text_query(text_llm, query_text, session_id)
+
+
+if __name__ == '__main__':
+    main()
