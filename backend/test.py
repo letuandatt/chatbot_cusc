@@ -3,8 +3,8 @@ import io
 import base64
 import config
 
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import CohereRerank
+from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
@@ -12,7 +12,7 @@ from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from PIL import Image
 
 
@@ -38,8 +38,7 @@ def initialize_llm(model_name, temperature):
     # Sử dụng model hỗ trợ cả text và image
     return ChatGoogleGenerativeAI(
         model=model_name,
-        temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơn
-        google_api_key=config.GOOGLE_API_KEY
+        temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơnTrong TT07.03, báo cáo hoạt động nhóm dự án được lũy kế từ quý nào?
     )
 
 
@@ -53,7 +52,7 @@ Mỗi chunk context sẽ có metadata như: Tên văn bản (ten_van_ban), Mã h
 
 Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc:
 - Dùng gạch đầu dòng (-) hoặc đánh số nếu có nhiều thông tin.
-- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata])". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
+- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata](, mục: [section từ metadata] nếu có))". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
 - Không được bịa đặt câu trả lời, chỉ dựa vào ngữ cảnh được cung cấp. Nếu không tìm thấy thông tin phù hợp, hãy ghi "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
 
 Lịch sử trò chuyện:

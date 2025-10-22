@@ -39,7 +39,6 @@ def initialize_llm(model_name, temperature):
     return ChatGoogleGenerativeAI(
         model=model_name,
         temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơn
-        google_api_key=config.GOOGLE_API_KEY
     )
 
 
