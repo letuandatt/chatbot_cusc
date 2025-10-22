@@ -1,19 +1,17 @@
 import os
 import nest_asyncio
 import re
+import config
 
 from llama_parse import LlamaParse
-from dotenv import load_dotenv
 
 nest_asyncio.apply()
 
-load_dotenv()
-
 def llama_parse_md(data_dir):
     parser = LlamaParse(
-        api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
+        api_key=config.LLAMA_CLOUD_API_KEY,
         parse_mode="parse_page_with_agent",
-        model="anthropic-sonnet-4.5",
+        model=config.LLAMA_PARSE_MODEL,
         output_tables_as_HTML=True,
         merge_tables_across_pages_in_markdown=True,
         compact_markdown_table=True,
@@ -25,7 +23,7 @@ def llama_parse_md(data_dir):
         specialized_chart_parsing_efficient=True
     )
 
-    save_dir = "data/after_parse"
+    save_dir = config.PARSE_SAVE_DIR
 
     for file in os.listdir(data_dir):
         full_path = os.path.join(data_dir, file)

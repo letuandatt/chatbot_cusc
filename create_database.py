@@ -4,16 +4,14 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_text_splitters import MarkdownHeaderTextSplitter
-from dotenv import load_dotenv
 from pathlib import Path
 
-import os
 import re
+import config
 
-load_dotenv()
 
-def create_data(CHROMA_PATH="vectorstores/chroma_db_2", google_api_key=os.getenv("GOOGLE_API_KEY")):
-    data = "data/after_parse"
+def create_data(CHROMA_PATH=config.VECTORSTORE_PATH, google_api_key=config.GOOGLE_API_KEY):
+    data = config.PARSE_SAVE_DIR
 
     def main():
         generate_data_store()
@@ -123,7 +121,7 @@ def create_data(CHROMA_PATH="vectorstores/chroma_db_2", google_api_key=os.getenv
 
     def load_embedding():
         embedding_model = GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004",
+            model=config.EMBEDDING_MODEL_NAME,
             google_api_key=google_api_key
         )
         return embedding_model
@@ -134,7 +132,7 @@ def create_data(CHROMA_PATH="vectorstores/chroma_db_2", google_api_key=os.getenv
             documents=chunks,
             persist_directory=CHROMA_PATH,
             embedding=embedding_model,
-            collection_name="docs_cusc"
+            collection_name=config.COLLECTION_NAME
         )
         print(f"Saved {len(chunks)} chunks to {CHROMA_PATH}")
 
