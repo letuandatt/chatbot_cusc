@@ -3,11 +3,12 @@ import os
 import io
 import base64
 import config
+import uuid
 
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
@@ -33,7 +34,7 @@ def save_session_message(session_id, question, answer, image_path=None):
     # Neu file session chua co -> tao moi Document
     if not os.path.exists(session_file):
         data = {
-            "_id": session_id,
+            "_id": uuid.uuid4().hex,
             "session_id": session_id,
             "created_at": now,
             "updated_at": now,
@@ -45,7 +46,7 @@ def save_session_message(session_id, question, answer, image_path=None):
                 data = json.load(f)
         except json.JSONDecodeError:
             data = {
-                "_id": session_id,
+                "_id": uuid.uuid4().hex,
                 "session_id": session_id,
                 "created_at": now,
                 "updated_at": now,
@@ -61,7 +62,6 @@ def save_session_message(session_id, question, answer, image_path=None):
     data["messages"].append({
         "role": "assistant",
         "content": answer,
-        "image_path": image_path,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -86,9 +86,22 @@ def load_session_messages(session_id):
 
     for msg in data.get("messages", []):
         if msg["role"] == "user":
-            history.add_user_message(msg["content"])
+            image_path = msg.get("image_path")
+            content_list = [
+                {"type": "text", "text": msg["content"]}
+            ]
+
+            if image_path and os.path.exists(image_path):
+                image_base64 = image_to_base64(image_path)
+                if image_base64:
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                    })
+
+            history.add_message(HumanMessage(content=content_list))
         elif msg["role"] == "assistant":
-            history.add_ai_message(msg["content"])
+            history.add_message(AIMessage(content=msg["content"]))
         else:
             print(f"Warning: Unknown role: {msg['role']}")
 
@@ -146,23 +159,36 @@ def initialize_llm(model_name, temperature):
 # --- LOGIC XỬ LÝ QUERY VĂN BẢN (RAG) ---
 
 PROMPT_TEMPLATE_RAG = """
-Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC,
-đồng thời có khả năng duy trì cuộc hội thoại nhiều lượt như một chatbot thật.
+Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
 
-Sử dụng thông tin trong NGỮ CẢNH (bao gồm cả lịch sử trò chuyện và tài liệu nội bộ) để trả lời chính xác, tự nhiên và nhất quán.
-Nếu câu hỏi liên quan đến nội dung trước đó trong cuộc trò chuyện, hãy dựa vào lịch sử trò chuyện mà trả lời.
+Bạn có hai nguồn thông tin để trả lời: LỊCH SỬ TRÒ CHUYỆN và NGỮ CẢNH (tài liệu CUSC).
+Hãy sử dụng cả hai một cách thông minh để trả lời câu hỏi của người dùng.
 
-Nếu không tìm thấy thông tin trong tài liệu nội bộ nhưng có thể suy ra từ lịch sử trò chuyện, hãy ưu tiên dựa vào lịch sử để trả lời.
-Chỉ khi hoàn toàn không có dữ liệu phù hợp, hãy nói: "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
+1.  **Nếu câu hỏi là về quy trình, thủ tục CUSC:**
+    * Hãy dựa chủ yếu vào NGỮ CẢNH (tài liệu) để trả lời.
+    * Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
+    * Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
+    * Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
 
-Ngữ cảnh:
+2.  **Nếu câu hỏi là về chính cuộc hội thoại (ví dụ: "tôi đã hỏi gì?", "bạn vừa nói gì?"):**
+    * Hãy dựa hoàn toàn vào LỊCH SỬ TRÒ CHUYỆN để trả lời.
+    * Không cần trích dẫn nguồn từ NGỮ CẢNH.
+
+Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc.
+
+---
+Lịch sử trò chuyện:
+{chat_history}
+
+---
+Ngữ cảnh (tài liệu CUSC):
 {context}
 
+---
 Câu hỏi: {question}
 
 Câu trả lời chi tiết:
 """
-
 
 # Giải pháp tạm thời (Sẽ integrate MongoDB soon)
 message_history_store = {}
@@ -214,16 +240,11 @@ def handle_text_query(llm, query_text, session_id="default_session"):
         ])
 
     # 4. Xây dựng và thực thi chuỗi RAG
-    def combine_context_and_history(x):
-        """Kết hợp lịch sử trò chuyện và ngữ cảnh truy xuất."""
-        docs_context = format_docs(retriever.invoke(x["question"]))
-        history_text = "\n".join([f"{m.type}: {m.content}" for m in x.get("chat_history", [])])
-        return f"LỊCH SỬ TRÒ CHUYỆN:\n{history_text}\n\nNGỮ CẢNH TÀI LIỆU:\n{docs_context}"
-
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
     base_rag_chain = (
-            {"context": combine_context_and_history,
-             "question": lambda x: x["question"]}  # Lấy history
+            {"context": lambda x: format_docs(retriever.invoke(x["question"])),
+             "question": lambda x: x["question"],
+             "chat_history": lambda x: x.get("chat_history", [])}  # Lấy history
             | prompt
             | llm
             | StrOutputParser()
