@@ -11,3 +11,4 @@ llama-parse~=0.6.76
 langchain-community~=0.3.31
 langchain-experimental~=0.3.4
 langchain-text-splitters~=0.3.11
+pymongo
