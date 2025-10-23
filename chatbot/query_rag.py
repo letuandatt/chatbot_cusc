@@ -1,3 +1,4 @@
+import json
 import os
 import io
 import base64
@@ -6,7 +7,7 @@ import config
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
@@ -14,6 +15,104 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from PIL import Image
+from datetime import datetime
+
+# --- SESSION MANAGEMENT ---
+SESSION_DIR = "sessions"
+
+def __get__session_file(session_id):
+    """Tra ve duong dan file JSON tuong ung voi session."""
+    os.makedirs(SESSION_DIR, exist_ok=True)
+    return os.path.join(SESSION_DIR, f"{session_id}.json")
+
+def save_session_message(session_id, question, answer):
+    """Luu cau hoi va cau tra loi cua mot session"""
+    session_file = __get__session_file(session_id)
+    now = datetime.now().isoformat()
+
+    # Neu file session chua co -> tao moi Document
+    if not os.path.exists(session_file):
+        data = {
+            "_id": session_id,
+            "session_id": session_id,
+            "created_at": now,
+            "updated_at": now,
+            "messages": []
+        }
+    else:
+        try:
+            with open(session_file, "r") as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            data = {
+                "_id": session_id,
+                "session_id": session_id,
+                "created_at": now,
+                "updated_at": now,
+                "messages": []
+            }
+
+    data["messages"].append({
+        "role": "user",
+        "content": question,
+        "timestamp": now
+    })
+    data["messages"].append({
+        "role": "assistant",
+        "content": answer,
+        "timestamp": datetime.now().isoformat()
+    })
+
+    data["updated_at"] = datetime.now().isoformat()
+
+    with open(session_file, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def load_session_messages(session_id):
+    """Load messages from session file"""
+    session_file = __get__session_file(session_id)
+    history = InMemoryChatMessageHistory()
+
+    if not os.path.exists(session_file):
+        return history
+
+    try:
+        with open(session_file, "r") as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        return history
+
+    for msg in data.get("messages", []):
+        if msg["role"] == "user":
+            history.add_user_message(msg["content"])
+        elif msg["role"] == "assistant":
+            history.add_ai_message(msg["content"])
+        else:
+            print(f"Warning: Unknown role: {msg['role']}")
+
+    return history
+
+def list_sessions():
+    """List all sessions"""
+    os.makedirs(SESSION_DIR, exist_ok=True)
+    sessions = []
+
+    for f_name in os.listdir(SESSION_DIR):
+        if f_name.endswith(".json"):
+            path = os.path.join(SESSION_DIR, f_name)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    sessions.append({
+                        "session_id": data["session_id"],
+                        "updated_at": data["updated_at"],
+                        "num_messages": len(data.get("messages", []))
+                    })
+            except Exception as e:
+                continue
+
+    sessions.sort(key=lambda x: x["updated_at"], reverse=True)
+    return sessions
 
 
 # --- CÁC HÀM TIỆN ÍCH VÀ CẤU HÌNH ---
@@ -72,7 +171,7 @@ message_history_store = {}
 def get_session_history(session_id: str):
     """Lấy lịch sử chat cho một session."""
     if session_id not in message_history_store:
-        message_history_store[session_id] = InMemoryChatMessageHistory()
+        message_history_store[session_id] = load_session_messages(session_id)
     return message_history_store[session_id]
 
 def handle_text_query(llm, query_text, session_id="default_session"):
@@ -145,6 +244,8 @@ def handle_text_query(llm, query_text, session_id="default_session"):
         full_response += chunk
         print(chunk, end="", flush=True)
     print("\n")
+
+    save_session_message(session_id, query_text, full_response)
 
 
 # --- LOGIC XỬ LÝ QUERY ĐA PHƯƠNG THỨC (TEXT + IMAGE) ---
@@ -247,6 +348,8 @@ def handle_multimodal_query(llm, query_text, image_path, session_id="default_ses
         print(content, end="", flush=True)
     print("\n")
 
+    save_session_message(session_id, query_text, full_response)
+
 
 # --- HÀM CHÍNH ĐIỀU PHỐI ---
 
@@ -255,7 +358,7 @@ def main():
     text_llm = initialize_llm(config.TEXT_MODEL_NAME, temperature=0.1)
     vision_llm = initialize_llm(config.VISION_MODEL_NAME, temperature=0.1)
 
-    session_id = "user_123_test"
+    session_id = input("Nhập session_id (mặc định = 'user_default'): ").strip() or "user_default"
 
     print("🤖 Chatbot CUSC đã sẵn sàng. Nhập 'exit' để thoát.")
 
