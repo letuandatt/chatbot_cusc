@@ -7,7 +7,7 @@ import config
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
@@ -25,7 +25,7 @@ def __get__session_file(session_id):
     os.makedirs(SESSION_DIR, exist_ok=True)
     return os.path.join(SESSION_DIR, f"{session_id}.json")
 
-def save_session_message(session_id, question, answer):
+def save_session_message(session_id, question, answer, image_path=None):
     """Luu cau hoi va cau tra loi cua mot session"""
     session_file = __get__session_file(session_id)
     now = datetime.now().isoformat()
@@ -55,11 +55,13 @@ def save_session_message(session_id, question, answer):
     data["messages"].append({
         "role": "user",
         "content": question,
+        "image_path": image_path,
         "timestamp": now
     })
     data["messages"].append({
         "role": "assistant",
         "content": answer,
+        "image_path": image_path,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -144,18 +146,14 @@ def initialize_llm(model_name, temperature):
 # --- LOGIC XỬ LÝ QUERY VĂN BẢN (RAG) ---
 
 PROMPT_TEMPLATE_RAG = """
-Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC,
+đồng thời có khả năng duy trì cuộc hội thoại nhiều lượt như một chatbot thật.
 
-Sử dụng những thông tin trong ngữ cảnh bên dưới để trả lời câu hỏi của người dùng một cách chi tiết, chính xác và đầy đủ.
-Mỗi chunk context sẽ có metadata như: Tên văn bản (ten_van_ban), Mã hiệu (ma_hieu).
+Sử dụng thông tin trong NGỮ CẢNH (bao gồm cả lịch sử trò chuyện và tài liệu nội bộ) để trả lời chính xác, tự nhiên và nhất quán.
+Nếu câu hỏi liên quan đến nội dung trước đó trong cuộc trò chuyện, hãy dựa vào lịch sử trò chuyện mà trả lời.
 
-Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc:
-- Dùng gạch đầu dòng (-) hoặc đánh số nếu có nhiều thông tin.
-- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata](, mục: [section từ metadata] nếu có))". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
-- Không được bịa đặt câu trả lời, chỉ dựa vào ngữ cảnh được cung cấp. Nếu không tìm thấy thông tin phù hợp, hãy ghi "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
-
-Lịch sử trò chuyện:
-{chat_history}
+Nếu không tìm thấy thông tin trong tài liệu nội bộ nhưng có thể suy ra từ lịch sử trò chuyện, hãy ưu tiên dựa vào lịch sử để trả lời.
+Chỉ khi hoàn toàn không có dữ liệu phù hợp, hãy nói: "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
 
 Ngữ cảnh:
 {context}
@@ -164,6 +162,7 @@ Câu hỏi: {question}
 
 Câu trả lời chi tiết:
 """
+
 
 # Giải pháp tạm thời (Sẽ integrate MongoDB soon)
 message_history_store = {}
@@ -215,11 +214,16 @@ def handle_text_query(llm, query_text, session_id="default_session"):
         ])
 
     # 4. Xây dựng và thực thi chuỗi RAG
+    def combine_context_and_history(x):
+        """Kết hợp lịch sử trò chuyện và ngữ cảnh truy xuất."""
+        docs_context = format_docs(retriever.invoke(x["question"]))
+        history_text = "\n".join([f"{m.type}: {m.content}" for m in x.get("chat_history", [])])
+        return f"LỊCH SỬ TRÒ CHUYỆN:\n{history_text}\n\nNGỮ CẢNH TÀI LIỆU:\n{docs_context}"
+
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
     base_rag_chain = (
-            {"context": lambda x: format_docs(retriever.invoke(x["question"])),
-             "question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}  # Lấy history
+            {"context": combine_context_and_history,
+             "question": lambda x: x["question"]}  # Lấy history
             | prompt
             | llm
             | StrOutputParser()
@@ -348,7 +352,7 @@ def handle_multimodal_query(llm, query_text, image_path, session_id="default_ses
         print(content, end="", flush=True)
     print("\n")
 
-    save_session_message(session_id, query_text, full_response)
+    save_session_message(session_id, query_text, full_response, image_path=image_path)
 
 
 # --- HÀM CHÍNH ĐIỀU PHỐI ---
