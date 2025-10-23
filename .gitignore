@@ -1,4 +1,4 @@
-backend/data
+chatbot/data
 .venv
 .env
 .idea
