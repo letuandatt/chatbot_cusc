@@ -2,31 +2,153 @@ import os
 import io
 import base64
 import config
+import uuid
+
+from datetime import datetime
+from pymongo import MongoClient, ASCENDING, DESCENDING
+from PIL import Image
 
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
-from PIL import Image
 
 
-# --- CÁC HÀM TIỆN ÍCH VÀ CẤU HÌNH ---
+# --- MONGODB CONNECTION ---
+try:
+    _mongo_client = MongoClient(config.MONGO_URI, serverSelectionTimeoutMS=5000)
+    _mongo_db = _mongo_client[config.MONGO_DB_NAME]
+    DB_COLLECTION = _mongo_db["sessions"]
+    DB_COLLECTION.create_index([("session_id", ASCENDING)], unique=True)
+    print(f"Connected successfully to MongoDB.")
+except Exception as e:
+    print(f"Failed to connect to MongoDB: {e}")
+    DB_COLLECTION = None
 
+
+def get_mongo_collection():
+    """Trả về collection 'sessions' đã được khởi tạo."""
+    return DB_COLLECTION
+
+
+# --- SESSION MANAGEMENT (MONGO) ---
+def save_session_message(session_id, question, answer, image_path=None):
+    """Lưu câu hỏi và câu trả lời vào MongoDB (bản tối ưu)."""
+    coll = get_mongo_collection()
+    if coll is None:
+        print("Lỗi: Không thể lưu session, DB chưa kết nối.")
+        return
+
+    now = datetime.now().isoformat()
+
+    image_base64_data = None
+    if image_path and os.path.exists(image_path):
+        image_base64_data = image_to_base64(image_path)
+
+    new_messages = [
+        {
+            "role": "user",
+            "content": question,
+            "image_base64": image_base64_data,
+            "timestamp": now
+        },
+        {
+            "role": "assistant",
+            "content": answer,
+            "timestamp": datetime.now().isoformat()
+        }
+    ]
+
+    coll.update_one(
+        {"session_id": session_id},
+        {
+            "$push": {"messages": {"$each": new_messages}},
+            "$set": {"updated_at": datetime.now().isoformat()},
+            "$setOnInsert": {  # <-- Chỉ set các trường này khi TẠO MỚI
+                "_id": uuid.uuid4().hex,
+                "created_at": now
+            }
+        },
+        upsert=True  # <-- Tự động tạo nếu chưa có
+    )
+
+
+def load_session_messages(session_id):
+    """Load lịch sử hội thoại từ MongoDB."""
+    coll = get_mongo_collection()
+    if coll is None:
+        return InMemoryChatMessageHistory()
+
+    history = InMemoryChatMessageHistory()
+
+    session_doc = coll.find_one({"session_id": session_id})
+    if not session_doc:
+        return history
+
+    for msg in session_doc.get("messages", []):
+        if msg["role"] == "user":
+            image_base64 = msg.get("image_base64")
+            content_list = [{"type": "text", "text": msg["content"]}]
+            if image_base64:
+                content_list.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                })
+            history.add_message(HumanMessage(content=content_list))
+        elif msg["role"] == "assistant":
+            history.add_message(AIMessage(content=msg["content"]))
+        else:
+            print(f"⚠️ Unknown role: {msg['role']}")
+
+    return history
+
+
+def list_sessions(limit=50):
+    """Liệt kê các session (đã tối ưu) mà không tải messages."""
+    coll = get_mongo_collection()
+    if coll is None:
+        return []
+
+    pipeline = [
+        {
+            "$project": {  # Chỉ lấy các trường này
+                "_id": 0,
+                "session_id": 1,
+                "updated_at": 1,
+                "num_messages": {"$size": "$messages"}  # Yêu cầu DB đếm
+            }
+        },
+        {
+            "$sort": {"updated_at": DESCENDING}
+        },
+        {
+            "$limit": limit  # Chỉ lấy 50 session gần nhất
+        }
+    ]
+
+    try:
+        sessions = list(coll.aggregate(pipeline))
+        return sessions
+    except Exception as e:
+        print(f"Lỗi khi list sessions: {e}")
+        return []
+
+
+# --- UTILS ---
 def image_to_base64(image_path):
-    """Chuyển đổi file ảnh sang chuỗi base64."""
+    """Chuyển file ảnh sang chuỗi base64."""
     try:
         with Image.open(image_path) as img:
-            # Chuyển đổi ảnh sang RGB để đảm bảo tương thích
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             buffered = io.BytesIO()
-            img.save(buffered, format="JPEG")  # Lưu dưới dạng JPEG để nhất quán
+            img.save(buffered, format="JPEG")
             return base64.b64encode(buffered.getvalue()).decode("utf-8")
     except Exception as e:
         print(f"Lỗi xử lý ảnh: {e}")
@@ -34,72 +156,73 @@ def image_to_base64(image_path):
 
 
 def initialize_llm(model_name, temperature):
-    """Khởi tạo mô hình ngôn ngữ lớn (LLM)."""
-    # Sử dụng model hỗ trợ cả text và image
+    """Khởi tạo mô hình ngôn ngữ."""
     return ChatGoogleGenerativeAI(
         model=model_name,
-        temperature=temperature,  # Tăng nhẹ để câu trả lời tự nhiên hơnTrong TT07.03, báo cáo hoạt động nhóm dự án được lũy kế từ quý nào?
+        temperature=temperature,
     )
 
 
-# --- LOGIC XỬ LÝ QUERY VĂN BẢN (RAG) ---
-
+# --- RAG PIPELINE (TEXT) ---
 PROMPT_TEMPLATE_RAG = """
 Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
 
-Sử dụng những thông tin trong ngữ cảnh bên dưới để trả lời câu hỏi của người dùng một cách chi tiết, chính xác và đầy đủ.
-Mỗi chunk context sẽ có metadata như: Tên văn bản (ten_van_ban), Mã hiệu (ma_hieu).
+Bạn có hai nguồn thông tin để trả lời: LỊCH SỬ TRÒ CHUYỆN và NGỮ CẢNH (tài liệu CUSC).
+Hãy sử dụng cả hai một cách thông minh để trả lời câu hỏi của người dùng.
 
-Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc:
-- Dùng gạch đầu dòng (-) hoặc đánh số nếu có nhiều thông tin.
-- Luôn trích dẫn nguồn ở cuối mỗi ý chính, dựa trên metadata của chunk tương ứng: Ví dụ "(Nguồn: [tên văn bản từ metadata], mã hiệu: [mã hiệu từ metadata](, mục: [section từ metadata] nếu có))". Nếu nhiều chunk, hãy trích dẫn từng cái phù hợp.
-- Không được bịa đặt câu trả lời, chỉ dựa vào ngữ cảnh được cung cấp. Nếu không tìm thấy thông tin phù hợp, hãy ghi "Không tìm thấy thông tin phù hợp với câu hỏi của bạn."
+1.  **Nếu câu hỏi là về quy trình, thủ tục CUSC:**
+    * Hãy dựa chủ yếu vào NGỮ CẢNH (tài liệu) để trả lời.
+    * Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
+    * Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
+    * Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
 
+2.  **Nếu câu hỏi là về chính cuộc hội thoại (ví dụ: "tôi đã hỏi gì?", "bạn vừa nói gì?"):**
+    * Hãy dựa hoàn toàn vào LỊCH SỬ TRÒ CHUYỆN để trả lời.
+    * Không cần trích dẫn nguồn từ NGỮ CẢNH.
+
+Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc.
+
+---
 Lịch sử trò chuyện:
 {chat_history}
 
-Ngữ cảnh:
+---
+Ngữ cảnh (tài liệu CUSC):
 {context}
 
+---
 Câu hỏi: {question}
 
 Câu trả lời chi tiết:
 """
 
-# Giải pháp tạm thời (Sẽ integrate MongoDB soon)
 message_history_store = {}
 
+
 def get_session_history(session_id: str):
-    """Lấy lịch sử chat cho một session."""
+    """Lấy lịch sử chat trong bộ nhớ."""
     if session_id not in message_history_store:
-        message_history_store[session_id] = InMemoryChatMessageHistory()
+        message_history_store[session_id] = load_session_messages(session_id)
     return message_history_store[session_id]
 
+
 def handle_text_query(llm, query_text, session_id="default_session"):
-    """Xử lý câu hỏi chỉ có văn bản bằng pipeline RAG."""
     print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
 
-    # 1. Khởi tạo embedding model
     embedding_model = GoogleGenerativeAIEmbeddings(
         model=config.EMBEDDING_MODEL_NAME,
         google_api_key=config.GOOGLE_API_KEY
     )
 
-    # 2. Khởi tạo Chroma DB
     db = Chroma(
         persist_directory=config.VECTORSTORE_PATH,
         embedding_function=embedding_model,
         collection_name=config.COLLECTION_NAME
     )
 
-    # 3. Thiết lập Retriever và Reranker
-    base_retriever = db.as_retriever(
-        search_kwargs={
-            "k": config.RAG_RETRIEVER_K
-        }
-    )
+    base_retriever = db.as_retriever(search_kwargs={"k": config.RAG_RETRIEVER_K})
     base_compressor = CohereRerank(
-        top_n=config.RAG_RERANKER_TOP_N,  # Giữ lại 5 kết quả relevant nhất
+        top_n=config.RAG_RERANKER_TOP_N,
         model=config.RERANK_MODEL_NAME,
         cohere_api_key=config.COHERE_API_KEY
     )
@@ -111,22 +234,21 @@ def handle_text_query(llm, query_text, session_id="default_session"):
     def format_docs(docs):
         return "\n\n".join([
             f"Nội dung Chunk: {doc.page_content}\n"
-            f"Metadata: (Tên văn bản: {doc.metadata.get('ten_van_ban', 'N/A')}, Mã hiệu: {doc.metadata.get('ma_hieu', 'N/A')})"
+            f"Metadata: (Tên văn bản: {doc.metadata.get('ten_van_ban', 'N/A')}, "
+            f"Mã hiệu: {doc.metadata.get('ma_hieu', 'N/A')})"
             for doc in docs
         ])
 
-    # 4. Xây dựng và thực thi chuỗi RAG
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
     base_rag_chain = (
-            {"context": lambda x: format_docs(retriever.invoke(x["question"])),
-             "question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}  # Lấy history
-            | prompt
-            | llm
-            | StrOutputParser()
+        {"context": lambda x: format_docs(retriever.invoke(x["question"])),
+         "question": lambda x: x["question"],
+         "chat_history": lambda x: x.get("chat_history", [])}
+        | prompt
+        | llm
+        | StrOutputParser()
     )
 
-    # Bọc chuỗi RAG bằng RunnableWithMessageHistory
     rag_chain_with_history = RunnableWithMessageHistory(
         base_rag_chain,
         get_session_history,
@@ -134,11 +256,8 @@ def handle_text_query(llm, query_text, session_id="default_session"):
         history_messages_key="chat_history",
     )
 
-    # 5. Stream kết quả
     full_response = ""
-    config_ = {"configurable": {"session_id": session_id}}  # Truyền session_id vào
-
-    # Input cho chain bây giờ là một dict
+    config_ = {"configurable": {"session_id": session_id}}
     input_data = {"question": query_text}
 
     for chunk in rag_chain_with_history.stream(input_data, config=config_):
@@ -146,9 +265,10 @@ def handle_text_query(llm, query_text, session_id="default_session"):
         print(chunk, end="", flush=True)
     print("\n")
 
+    save_session_message(session_id, query_text, full_response)
 
-# --- LOGIC XỬ LÝ QUERY ĐA PHƯƠNG THỨC (TEXT + IMAGE) ---
 
+# --- MULTIMODAL QUERY (TEXT + IMAGE) ---
 PROMPT_TEMPLATE_VISION = """
 Bạn là một trợ lý AI thông minh. Dựa vào hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
 Trả lời bằng tiếng Việt.
@@ -160,68 +280,32 @@ Câu hỏi: {question}
 Câu trả lời:
 """
 
-def handle_multimodal_query(llm, query_text, image_path, session_id="default_session"):
-    """Xử lý câu hỏi có cả văn bản và hình ảnh."""
-    print(f"--- 🖼️ Đang xử lý câu hỏi với ảnh: {os.path.basename(image_path)} ---")
 
-    # 1. Nhận dict (từ chain) và trả về list[HumanMessage] cho LLM
-    def _format_vision_message(input_dict: dict) -> list:
+def handle_multimodal_query(llm, query_text, image_path, session_id="default_session"):
+    print(f"--- 🖼️ Xử lý câu hỏi có ảnh: {os.path.basename(image_path)} ---")
+
+    def _format_vision_message(input_dict):
         history = input_dict.get("chat_history", [])
         question = input_dict["question"]
         img_path = input_dict["image_path"]
-
-        prompt_text = PROMPT_TEMPLATE_VISION.format(
-            question=question,
-            chat_history=history
-        )
-
-        image_base64 = image_to_base64(img_path) # <-- Sửa lỗi logic nhỏ: dùng img_path
+        prompt_text = PROMPT_TEMPLATE_VISION.format(question=question, chat_history=history)
+        image_base64 = image_to_base64(img_path)
         if not image_base64:
-            return [HumanMessage(content="Lỗi: Không thể xử lý ảnh.")]
+            return [HumanMessage(content="Lỗi ảnh.")]
+        image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+        return [HumanMessage(content=[{"type": "text", "text": prompt_text}, image_data])]
 
-        image_data = {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-        }
-
-        return [
-            HumanMessage(
-                content=[
-                    {"type": "text", "text": prompt_text},
-                    image_data
-                ]
-            )
-        ]
-
-    def _format_history_input(input_dict: dict) -> HumanMessage:
+    def _format_history_input(input_dict):
         question = input_dict["question"]
         img_path = input_dict["image_path"]
-
         image_base64 = image_to_base64(img_path)
         if not image_base64:
             return HumanMessage(content=f"(Lỗi ảnh) {question}")
+        image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+        return HumanMessage(content=[{"type": "text", "text": question}, image_data])
 
-        image_data = {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-        }
+    base_vision_chain = RunnablePassthrough() | RunnableLambda(_format_vision_message) | llm
 
-        # Trả về 1 HumanMessage duy nhất chứa CẢ text và ảnh
-        return HumanMessage(
-            content=[
-                {"type": "text", "text": question},
-                image_data
-            ]
-        )
-
-    # 2. Build chain
-    base_vision_chain = (
-        RunnablePassthrough()
-        | RunnableLambda(_format_vision_message)
-        | llm
-    )
-
-    # 3. Bọc Chain cơ sở bằng Bộ nhớ
     vision_chain_with_history = RunnableWithMessageHistory(
         base_vision_chain,
         get_session_history,
@@ -230,56 +314,43 @@ def handle_multimodal_query(llm, query_text, image_path, session_id="default_ses
         history_messages_key="chat_history",
     )
 
-    # 4. Chuẩn bị Input và Config
-    input_data = {
-        "question": query_text,
-        "image_path": image_path
-    }
-
+    input_data = {"question": query_text, "image_path": image_path}
     config_ = {"configurable": {"session_id": session_id}}
 
-    # 5. Stream kết quả
     full_response = ""
     for chunk in vision_chain_with_history.stream(input_data, config=config_):
-        # chunk bây giờ là AIMessageChunk, cần .content
-        content = chunk.content
-        full_response += content
-        print(content, end="", flush=True)
+        full_response += chunk.content
+        print(chunk.content, end="", flush=True)
     print("\n")
 
+    save_session_message(session_id, query_text, full_response, image_path=image_path)
 
-# --- HÀM CHÍNH ĐIỀU PHỐI ---
 
+# --- MAIN FUNCTION ---
 def main():
-    """Hàm chính để chạy chatbot."""
     text_llm = initialize_llm(config.TEXT_MODEL_NAME, temperature=0.1)
     vision_llm = initialize_llm(config.VISION_MODEL_NAME, temperature=0.1)
 
-    session_id = "user_123_test"
-
-    print("🤖 Chatbot CUSC đã sẵn sàng. Nhập 'exit' để thoát.")
+    session_id = str(uuid.uuid4())
+    print("🤖 Chatbot CUSC (MongoDB) sẵn sàng!")
+    print(f"🆔 Session ID: {session_id}")
+    print("Nhập 'exit' để thoát.\n")
 
     while True:
-        # 1. Nhận câu hỏi từ người dùng
-        query_text = input("\n👤 Bạn hỏi: ")
-        if query_text.lower() == 'exit':
+        query_text = input("👤 Bạn hỏi: ")
+        if query_text.lower() == "exit":
             break
 
-        # 2. Hỏi đường dẫn ảnh (tùy chọn)
-        image_path = input("🖼️ Nhập đường dẫn ảnh (hoặc nhấn Enter để bỏ qua): ").strip()
-
+        image_path = input("🖼️ Nhập đường dẫn ảnh (Enter nếu không có): ").strip()
         print("\n💡 Trả lời:")
 
-        # 3. Điều hướng logic xử lý
         if image_path and os.path.exists(image_path):
             handle_multimodal_query(vision_llm, query_text, image_path, session_id)
         elif image_path:
-            print(f"⚠️ Lỗi: Không tìm thấy file ảnh tại '{image_path}'")
-            print(f"Vui lòng xem lại file ảnh!")
-            continue
+            print(f"⚠️ Không tìm thấy ảnh tại '{image_path}'")
         else:
             handle_text_query(text_llm, query_text, session_id)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
