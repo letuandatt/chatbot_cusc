@@ -331,10 +331,45 @@ def main():
     text_llm = initialize_llm(config.TEXT_MODEL_NAME, temperature=0.1)
     vision_llm = initialize_llm(config.VISION_MODEL_NAME, temperature=0.1)
 
-    session_id = str(uuid.uuid4())
     print("🤖 Chatbot CUSC (MongoDB) sẵn sàng!")
-    print(f"🆔 Session ID: {session_id}")
+    print("=" * 30)
+    print("[1] Tạo session mới")
+    print("[2] Tiếp tục session cũ")
+
+    session_id = None
+    choice = input("Lựa chọn của bạn (1 hoặc 2): ").strip()
+
+    if choice == '2':
+        # --- Logic tiếp tục session ---
+        print("\nĐang tải các session gần đây...")
+        sessions = list_sessions(limit=10)  # Lấy 10 session gần nhất
+
+        if not sessions:
+            print("Không tìm thấy session nào. Sẽ tạo session mới.")
+            session_id = str(uuid.uuid4())
+        else:
+            for i, s in enumerate(sessions):
+                print(f"  [{i + 1}] {s['session_id']} ({s['num_messages']} tin nhắn, cập nhật: {s['updated_at']})")
+
+            try:
+                s_choice = int(input("Chọn session (nhập số 1, 2,...) hoặc 0 để tạo mới: ").strip())
+                if 0 < s_choice <= len(sessions):
+                    session_id = sessions[s_choice - 1]['session_id']
+                else:
+                    print("Lựa chọn không hợp lệ, sẽ tạo session mới.")
+                    session_id = str(uuid.uuid4())
+            except ValueError:
+                print("Lựa chọn không hợp lệ, sẽ tạo session mới.")
+                session_id = str(uuid.uuid4())
+    else:
+        # --- Logic tạo session mới (mặc định) ---
+        session_id = str(uuid.uuid4())
+
+    print(f"\n🆔 Session ID hiện tại: {session_id}")
     print("Nhập 'exit' để thoát.\n")
+
+    # Tải lịch sử ngay khi bắt đầu (để chat_history không bị rỗng)
+    get_session_history(session_id)
 
     while True:
         query_text = input("👤 Bạn hỏi: ")
