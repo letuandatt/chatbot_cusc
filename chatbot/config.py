@@ -26,3 +26,7 @@ RAG_RERANKER_TOP_N = 6
 # --- PARSING ---
 PARSE_DATA_DIR = "data"
 PARSE_SAVE_DIR = "data/after_parse"
+
+# --- MONGODB ---
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DB_NAME = "Chatbot_CUSC"
