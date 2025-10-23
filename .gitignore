@@ -10,3 +10,4 @@ __pycache__/
 *.pyd
 test_query_data.py
 test_query_picture.py
+chatbot/sessions/
