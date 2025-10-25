@@ -1,10 +1,11 @@
 import os
 import io
 import base64
-import config
 import uuid
 import gridfs
 import functools
+
+from chatbot import config
 
 from datetime import datetime, timezone
 from pymongo import MongoClient, ASCENDING, DESCENDING
