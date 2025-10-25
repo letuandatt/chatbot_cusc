@@ -298,7 +298,7 @@ export default {
   align-items: center;
   text-align: center;
   color: var(--text-secondary);
-  padding: 40px;
+  padding: 42px;
   /* Thêm hiệu ứng nền nhẹ */
   background: radial-gradient(circle at top center, rgba(37, 42, 51, 0.5) 0%, transparent 60%);
   overflow: hidden; /* Ẩn phần gradient tràn ra ngoài */
@@ -313,10 +313,11 @@ export default {
 }
 
 .welcome-screen p {
-  max-width: 450px; /* Rộng hơn chút */
+  max-width: 500px; /* Rộng hơn chút */
   line-height: 1.8;   /* Giãn dòng */
   font-size: 1rem;    /* Cỡ chữ to hơn */
   margin-bottom: 40px; /* Khoảng cách với icon */
+  margin-top: 10px;
 }
 
 .welcome-icon {
