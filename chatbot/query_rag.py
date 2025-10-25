@@ -123,9 +123,6 @@ def load_session_messages(session_id, max_history_message: int = 50):
         {"session_id": session_id},
         projection={
             "messages": {"$slice": -max_history_message},
-            "messages.role": 1,
-            "messages.content": 1,
-            "messages.image_gridfs_id": 1
         },
     )
     if not session_doc:
@@ -276,35 +273,59 @@ def get_retrieved_docs(query: str):
 
 
 # --- RAG PIPELINE (TEXT) ---
-PROMPT_TEMPLATE_RAG = """
-Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+router_prompt_template = """
+Bạn là AI phân loại câu hỏi. Dựa trên Lịch sử trò chuyện và Câu hỏi mới,
+hãy phân loại câu hỏi vào MỘT trong hai loại sau:
 
-Bạn có hai nguồn thông tin để trả lời: LỊCH SỬ TRÒ CHUYỆN và NGỮ CẢNH (tài liệu CUSC).
-Hãy sử dụng cả hai một cách thông minh để trả lời câu hỏi của người dùng.
+1.  `rag_query`: Câu hỏi yêu cầu thông tin về quy trình, thủ tục, hoặc
+    thông tin cụ thể (ví dụ: "Quy trình nghỉ phép là gì?", "TT07.03 nói về cái gì?",
+    "thế còn nhân viên thử việc thì sao?").
 
-1.  **Nếu câu hỏi là về quy trình, thủ tục CUSC:**
-    * Hãy dựa chủ yếu vào NGỮ CẢNH (tài liệu) để trả lời.
-    * Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
-    * Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
-    * Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
+2.  `history_query`: Câu hỏi về chính cuộc hội thoại
+    (ví dụ: "bạn vừa nói gì?", "câu hỏi thứ 3 của tôi là gì?", "bạn có nhớ tôi không?").
 
-2.  **Nếu câu hỏi là về chính cuộc hội thoại (ví dụ: "tôi đã hỏi gì?", "bạn vừa nói gì?"):**
-    * Hãy dựa hoàn toàn vào LỊCH SỬ TRÒ CHUYỆN để trả lời.
-    * Không cần trích dẫn nguồn từ NGỮ CẢNH.
-
-Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc. Luôn trả lời bằng markdown tiếng Việt rõ ràng.
+Chỉ trả lời bằng MỘT từ duy nhất: `rag_query` hoặc `history_query`.
 
 ---
 Lịch sử trò chuyện:
 {chat_history}
+---
+Câu hỏi mới: {question}
+---
+Phân loại:
+"""
 
+history_prompt_template = """
+Bạn là trợ lý AI tại CUSC.
+Chỉ dựa vào LỊCH SỬ TRÒ CHUYỆN được cung cấp, hãy trả lời CÂU HỎI của người dùng.
+Không được bịa đặt thông tin.
+
+---
+Lịch sử trò chuyện:
+{chat_history}
+---
+Câu hỏi: {question}
+---
+Câu trả lời:
+"""
+
+PROMPT_TEMPLATE_RAG = """
+Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+Sử dụng NGỮ CẢNH (tài liệu CUSC) được cung cấp bên dưới để trả lời CÂU HỎI.
+Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
+
+Hãy trả lời bằng tiếng Việt, chi tiết, chính xác.
+- Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
+- Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
+
+---
+Lịch sử trò chuyện:
+{chat_history}
 ---
 Ngữ cảnh (tài liệu CUSC):
 {context}
-
 ---
 Câu hỏi: {question}
-
 Câu trả lời chi tiết:
 """
 
@@ -329,18 +350,58 @@ def handle_text_query(llm, query_text, session_id="default_session"):
             for doc in docs
         ])
 
-    prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
-    base_rag_chain = (
-            {"context": lambda x: format_docs(get_retrieved_docs(x["question"])),
-             "question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}
-            | prompt
-            | llm
-            | StrOutputParser()
+    router_chain = (
+        PromptTemplate.from_template(router_prompt_template)
+        | llm
+        | StrOutputParser()
     )
 
-    rag_chain_with_history = RunnableWithMessageHistory(
-        base_rag_chain,
+    rag_chain = (
+        {"context": lambda x: format_docs(get_retrieved_docs(x["question"])),
+            "question": lambda x: x["question"],
+            "chat_history": lambda x: x.get("chat_history", [])}
+        | PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
+        | llm
+        | StrOutputParser()
+    )
+
+    history_chain = (
+        {"question": lambda x: x["question"],
+         "chat_history": lambda x: x.get("chat_history", [])}
+        | PromptTemplate.from_template(history_prompt_template)
+        | llm
+        | StrOutputParser()
+    )
+
+    def route(input_dict: dict):
+        history = input_dict.get("chat_history", [])
+        question = input_dict["question"]
+
+        classification = router_chain.invoke({
+            "question": question,
+            "chat_history": history
+        })
+
+        # Decision
+        if "history_query" in classification:
+            print("--- (Router: Chuyển hướng sang Lịch sử) ---")
+            return history_chain  # Trả về chain Lịch sử
+        else:  # Mặc định là RAG
+            print("--- (Router: Chuyển hướng sang RAG) ---")
+            return rag_chain  # Trả về chain RAG
+
+    # `base_chain` là chain chính. Nó sẽ:
+    # 1. Nhận input.
+    # 2. Chạy hàm `route` để chọn `history_chain` hoặc `rag_chain`.
+    # 3. Chạy chain đã được chọn.
+    base_chain = (
+        {"question": lambda x: x["question"],
+         "chat_history": lambda x: x.get("chat_history", [])}
+        | RunnableLambda(route)
+    )
+
+    chain_with_history = RunnableWithMessageHistory(
+        base_chain,
         get_session_history,
         input_messages_key="question",
         history_messages_key="chat_history",
@@ -350,7 +411,7 @@ def handle_text_query(llm, query_text, session_id="default_session"):
     config_ = {"configurable": {"session_id": session_id}}
     input_data = {"question": query_text}
 
-    for chunk in rag_chain_with_history.stream(input_data, config=config_):
+    for chunk in chain_with_history.stream(input_data, config=config_):
         full_response += chunk
         print(chunk, end="", flush=True)
     print("\n")
