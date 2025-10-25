@@ -74,7 +74,7 @@ def save_session_message(session_id, question, answer, image_path=None):
                 image_gridfs_id = FS.put(
                     i_f,
                     filename=os.path.basename(image_path),
-                    metada={
+                    metadata={
                         "session_id": session_id,
                         "created_at": now,
                         "updated_at": now
