@@ -225,6 +225,7 @@ def list_sessions(limit=50):
             "$project": {  # Chỉ lấy các trường này
                 "_id": 0,
                 "session_id": 1,
+                "session_name": 1,
                 "updated_at": 1,
                 "created_at": 1,
                 "num_messages": {"$size": "$messages"}  # Yêu cầu DB đếm
@@ -378,7 +379,7 @@ Câu trả lời chi tiết:
 VISION_PROMPT_TEMPLATE = PromptTemplate.from_template("""
 Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
 
-Dựa vào lịch sử trò chuyện, hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trảLợi chi tiết, chính xác và hữu ích.
+Dựa vào lịch sử trò chuyện, hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
 Trả lời bằng tiếng Việt.
 
 Lịch sử trò chuyện: {chat_history}
