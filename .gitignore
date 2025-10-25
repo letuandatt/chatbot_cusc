@@ -14,3 +14,4 @@ chatbot/sessions/
 chatbot/test.py
 chatbot/test_evaluate.py
 backend/test_rag_api.py
+node_modules
