@@ -13,3 +13,4 @@ chatbot/test_query_picture.py
 chatbot/sessions/
 chatbot/test.py
 chatbot/test_evaluate.py
+chatbot/test_rag_api.py
