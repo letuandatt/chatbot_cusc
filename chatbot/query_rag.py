@@ -153,6 +153,7 @@ def list_sessions(limit=50):
                 "_id": 0,
                 "session_id": 1,
                 "updated_at": 1,
+                "created_at": 1,
                 "num_messages": {"$size": "$messages"}  # Yêu cầu DB đếm
             }
         },
@@ -173,14 +174,24 @@ def list_sessions(limit=50):
 
 
 # --- UTILS ---
-def image_to_base64(image_path):
-    """Chuyển file ảnh sang chuỗi base64."""
+def image_to_base64(image_path, max_size_px=1024, jpeg_quality=90):
+    """Chuyển file ảnh sang chuỗi base64, đồng thời
+    resize và nén ảnh để tối ưu chi phí và tốc độ.
+    """
     try:
         with Image.open(image_path) as img:
+            img.thumbnail((max_size_px, jpeg_quality))
+
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+
             buffered = io.BytesIO()
-            img.save(buffered, format="JPEG")
+            img.save(
+                buffered,
+                format="JPEG",
+                quality=jpeg_quality,
+                optimize=True
+            )
             return base64.b64encode(buffered.getvalue()).decode("utf-8")
     except Exception as e:
         print(f"Lỗi xử lý ảnh: {e}")
@@ -412,7 +423,10 @@ def main():
             session_id = str(uuid.uuid4())
         else:
             for i, s in enumerate(sessions):
+                created_ts = s.get('created_at', 'N/A')
+                updated_ts = s.get('updated_at', 'N/A')
                 print(f"  [{i + 1}] {s['session_id']} ({s['num_messages']} tin nhắn, cập nhật: {s['updated_at']})")
+                print(f"      Tạo: {created_ts} | Cập nhật: {updated_ts}")
 
             try:
                 s_choice = int(input("Chọn session (nhập số 1, 2,...) hoặc 0 để tạo mới: ").strip())
