@@ -38,6 +38,9 @@ try:
     FS = gridfs.GridFS(_mongo_db)
 
     DB_COLLECTION.create_index([("session_id", ASCENDING)], unique=True)
+
+    DB_COLLECTION.create_index([("updated_at", DESCENDING)])
+
     print(f"Connected successfully to MongoDB and GridFS.")
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
@@ -97,7 +100,7 @@ def save_session_message(session_id, question, answer, image_path=None):
     )
 
 
-def load_session_messages(session_id):
+def load_session_messages(session_id, max_history_message: int = 50):
     """Load lịch sử hội thoại từ MongoDB."""
     coll = get_mongo_collection()
     if coll is None or FS is None:
@@ -105,7 +108,10 @@ def load_session_messages(session_id):
 
     history = InMemoryChatMessageHistory()
 
-    session_doc = coll.find_one({"session_id": session_id})
+    session_doc = coll.find_one(
+        {"session_id": session_id},
+        projection={"messages": {"$slice": -max_history_message}}
+    )
     if not session_doc:
         return history
 
