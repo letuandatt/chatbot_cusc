@@ -163,7 +163,6 @@ def save_session_message(session_id, question, answer, image_path=None):
             "$push": {"messages": {"$each": new_messages}},
             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
             "$setOnInsert": {  # <-- Chỉ set các trường này khi TẠO MỚI
-                "_id": ObjectId(uuid.uuid4().hex),
                 "created_at": now
             }
         },
