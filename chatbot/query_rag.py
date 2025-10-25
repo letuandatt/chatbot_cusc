@@ -3,9 +3,11 @@ import io
 import base64
 import config
 import uuid
+import gridfs
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pymongo import MongoClient, ASCENDING, DESCENDING
+from bson.objectid import ObjectId
 from PIL import Image
 
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
@@ -22,14 +24,25 @@ from langchain_core.prompts import PromptTemplate
 
 # --- MONGODB CONNECTION ---
 try:
-    _mongo_client = MongoClient(config.MONGO_URI, serverSelectionTimeoutMS=5000)
+    _mongo_client = MongoClient(
+        config.MONGO_URI,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000
+    )
+    _mongo_client.admin.command('ping')
+    print("MongoDB ping successful.")
+
     _mongo_db = _mongo_client[config.MONGO_DB_NAME]
     DB_COLLECTION = _mongo_db["sessions"]
+
+    FS = gridfs.GridFS(_mongo_db)
+
     DB_COLLECTION.create_index([("session_id", ASCENDING)], unique=True)
-    print(f"Connected successfully to MongoDB.")
+    print(f"Connected successfully to MongoDB and GridFS.")
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
     DB_COLLECTION = None
+    FS = None
 
 
 def get_mongo_collection():
@@ -41,27 +54,32 @@ def get_mongo_collection():
 def save_session_message(session_id, question, answer, image_path=None):
     """Lưu câu hỏi và câu trả lời vào MongoDB (bản tối ưu)."""
     coll = get_mongo_collection()
-    if coll is None:
-        print("Lỗi: Không thể lưu session, DB chưa kết nối.")
+    if coll is None or FS is None:
+        print("Lỗi: Không thể lưu session, DB hoặc GridFS chưa kết nối.")
         return
 
-    now = datetime.now().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
-    image_base64_data = None
+    image_gridfs_id = None
+
     if image_path and os.path.exists(image_path):
-        image_base64_data = image_to_base64(image_path)
+        try:
+            with open(image_path, "rb") as i_f:
+                image_gridfs_id = FS.put(i_f, filename=os.path.basename(image_path))
+        except Exception as ex:
+            print(f"Lỗi khi lưu ảnh vào GridFS: {ex}")
 
     new_messages = [
         {
             "role": "user",
             "content": question,
-            "image_base64": image_base64_data,
+            "image_gridfs_id": str(image_gridfs_id) if image_gridfs_id else None,
             "timestamp": now
         },
         {
             "role": "assistant",
             "content": answer,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
     ]
 
@@ -69,7 +87,7 @@ def save_session_message(session_id, question, answer, image_path=None):
         {"session_id": session_id},
         {
             "$push": {"messages": {"$each": new_messages}},
-            "$set": {"updated_at": datetime.now().isoformat()},
+            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
             "$setOnInsert": {  # <-- Chỉ set các trường này khi TẠO MỚI
                 "_id": uuid.uuid4().hex,
                 "created_at": now
@@ -82,7 +100,7 @@ def save_session_message(session_id, question, answer, image_path=None):
 def load_session_messages(session_id):
     """Load lịch sử hội thoại từ MongoDB."""
     coll = get_mongo_collection()
-    if coll is None:
+    if coll is None or FS is None:
         return InMemoryChatMessageHistory()
 
     history = InMemoryChatMessageHistory()
@@ -93,13 +111,21 @@ def load_session_messages(session_id):
 
     for msg in session_doc.get("messages", []):
         if msg["role"] == "user":
-            image_base64 = msg.get("image_base64")
+            image_gridfs_id_str = msg.get("image_gridfs_id")
             content_list = [{"type": "text", "text": msg["content"]}]
-            if image_base64:
-                content_list.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                })
+
+            if image_gridfs_id_str:
+                try:
+                    image_id = ObjectId(image_gridfs_id_str)
+                    image_data = FS.get(image_id)
+                    image_base64 = base64.b64encode(image_data.read()).decode("utf-8")
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                    })
+                except Exception as ex:
+                    print(f"Lỗi khi tải ảnh từ GridFS (ID: {image_gridfs_id_str}): {ex}")
+
             history.add_message(HumanMessage(content=content_list))
         elif msg["role"] == "assistant":
             history.add_message(AIMessage(content=msg["content"]))
