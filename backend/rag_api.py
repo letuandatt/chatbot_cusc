@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse  # <-- Quan trọng cho streamin
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from typing import Optional
+from pydantic import BaseModel
 
 
 # --- 1. IMPORT CÁC THÀNH PHẦN ĐÃ KHỞI TẠO TỪ query_rag.py ---
@@ -54,6 +55,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class RenameSessionRequest(BaseModel):
+    new_name: str # Định nghĩa dữ liệu cần gửi lên: tên mới
+
 
 # --- Health check ---
 @app.get("/health")
@@ -96,17 +100,50 @@ def create_new_session():
         raise HTTPException(status_code=503, detail="Failed to connect to MongoDB")
 
     now = datetime.now(timezone.utc).isoformat()
+    default_name = f"Chat {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}"
     try:
         coll.insert_one({
             "session_id": session_id,
+            "session_name": default_name,
             "created_at": now,
             "updated_at": now,
             "messages": []
         })
-        return {"session_id": session_id, "message": "Session created successfully"}
+        return {
+            "session_id": session_id,
+            "session_name": default_name,
+            "message": "Session created successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
 
+
+# --- Rename session ---
+@app.put("/session/{session_id}/rename")
+def rename_session(session_id: str, request: RenameSessionRequest):
+    """Cập nhật tên hiển thị (session_name) cho một session."""
+    coll = get_mongo_collection()
+    if coll is None:
+        raise HTTPException(status_code=503, detail="Failed to connect to MongoDB")
+
+    new_name = request.new_name.strip()
+
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New session name cannot be empty")
+
+    try:
+        result = coll.update_one(
+            {"session_id": session_id},
+            {"$set": {
+                "session_name": new_name,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return {"status": "renamed", "session_id": session_id, "new_name": new_name}
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"Error renaming session {session_id}: {str(ex)}")
 
 # --- List sessions ---
 @app.get("/sessions")
@@ -152,20 +189,47 @@ def delete_session(session_id: str):
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"Error deleting session {session_id}: {str(ex)}")
 
+@app.delete("/sessions/all")
+def delete_all_sessions():
+    """Xóa TẤT CẢ các session khỏi MongoDB."""
+    coll = get_mongo_collection()
+    if coll is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    try:
+        result = coll.delete_many({}) # Xóa tất cả document
+        # Xóa luôn cache trong RAM (nếu đang dùng)
+        # Cẩn thận: Nếu có nhiều worker, chỉ xóa cache của worker hiện tại
+        global message_history_store # Cần khai báo global nếu sửa biến toàn cục
+        if message_history_store:
+            message_history_store.clear()
+        print(f"Deleted {result.deleted_count} sessions.")
+        return {"status": "deleted_all", "count": result.deleted_count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 # --- Chat: text-only query ---
 @app.post("/chat/text")
-async def chat_text(question: str = Form(...), session_id: Optional[str] = Form(None)):
+async def chat_text(question: str = Form(...), session_id: str = Form(...)):
     """Endpoint chính để chat bằng văn bản, trả về stream."""
     if not question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    # Kiểm tra xem session_id có tồn tại trong DB không
+    coll = get_mongo_collection()
+    if coll is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    try:
+        session_exists = coll.count_documents({"session_id": session_id}, limit=1) > 0
+        if not session_exists:
+            raise HTTPException(status_code=404,
+                                detail=f"Session not found: {session_id}. Please create a session first.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error checking session: {e}")
 
     # Sử dụng chain RAG đã được khởi tạo toàn cục
     chain_to_run = RAG_CHAIN_WITH_HISTORY
     if chain_to_run is None:
         raise HTTPException(status_code=503, detail="RAG system is not available")
-
-    session_id = session_id or str(uuid.uuid4().hex)
 
     async def stream_response():
         """Tạo generator để stream từng chunk câu trả lời."""
@@ -195,18 +259,28 @@ async def chat_with_image(
     background_tasks: BackgroundTasks,
     question: str = Form(...),
     file: UploadFile = File(...),
-    session_id: Optional[str] = Form(None)
+    session_id: str = Form(...)
 ):
     """Endpoint chính để chat có ảnh, trả về stream."""
     if not question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+    # Kiểm tra xem session_id có tồn tại trong DB không
+    coll = get_mongo_collection()
+    if coll is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+    try:
+        session_exists = coll.count_documents({"session_id": session_id}, limit=1) > 0
+        if not session_exists:
+            raise HTTPException(status_code=404,
+                                detail=f"Session not found: {session_id}. Please create a session first.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error checking session: {e}")
+
     # Sử dụng chain Vision đã được khởi tạo toàn cục
     chain_to_run = VISION_CHAIN_WITH_HISTORY
     if chain_to_run is None:
         raise HTTPException(status_code=503, detail="Vision system is not available")
-
-    session_id = session_id or str(uuid.uuid4().hex)
 
     temp_dir = tempfile.mkdtemp()
     safe_filename = f"{uuid.uuid4().hex}_{file.filename}"
