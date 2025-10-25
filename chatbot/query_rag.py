@@ -27,7 +27,10 @@ try:
     _mongo_client = MongoClient(
         config.MONGO_URI,
         serverSelectionTimeoutMS=5000,
-        connectTimeoutMS=5000
+        connectTimeoutMS=5000,
+        connect=False,
+        maxPoolSize=20,
+        retryWrites=True
     )
     _mongo_client.admin.command('ping')
     print("MongoDB ping successful.")
@@ -68,7 +71,15 @@ def save_session_message(session_id, question, answer, image_path=None):
     if image_path and os.path.exists(image_path):
         try:
             with open(image_path, "rb") as i_f:
-                image_gridfs_id = FS.put(i_f, filename=os.path.basename(image_path))
+                image_gridfs_id = FS.put(
+                    i_f,
+                    filename=os.path.basename(image_path),
+                    metada={
+                        "session_id": session_id,
+                        "created_at": now,
+                        "updated_at": now
+                    }
+                )
         except Exception as ex:
             print(f"Lỗi khi lưu ảnh vào GridFS: {ex}")
 
@@ -110,7 +121,12 @@ def load_session_messages(session_id, max_history_message: int = 50):
 
     session_doc = coll.find_one(
         {"session_id": session_id},
-        projection={"messages": {"$slice": -max_history_message}}
+        projection={
+            "messages": {"$slice": -max_history_message},
+            "messages.role": 1,
+            "messages.content": 1,
+            "messages.image_gridfs_id": 1
+        },
     )
     if not session_doc:
         return history
@@ -180,7 +196,7 @@ def image_to_base64(image_path, max_size_px=1024, jpeg_quality=90):
     """
     try:
         with Image.open(image_path) as img:
-            img.thumbnail((max_size_px, jpeg_quality))
+            img.thumbnail((max_size_px, max_size_px))
 
             if img.mode != 'RGB':
                 img = img.convert('RGB')
@@ -276,7 +292,7 @@ Hãy sử dụng cả hai một cách thông minh để trả lời câu hỏi c
     * Hãy dựa hoàn toàn vào LỊCH SỬ TRÒ CHUYỆN để trả lời.
     * Không cần trích dẫn nguồn từ NGỮ CẢNH.
 
-Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc.
+Hãy trả lời bằng tiếng Việt, với định dạng đẹp và dễ đọc. Luôn trả lời bằng markdown tiếng Việt rõ ràng.
 
 ---
 Lịch sử trò chuyện:
