@@ -311,6 +311,7 @@ Câu trả lời:
 
 PROMPT_TEMPLATE_RAG = """
 Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+
 Sử dụng NGỮ CẢNH (tài liệu CUSC) được cung cấp bên dưới để trả lời CÂU HỎI.
 Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
 
@@ -421,7 +422,9 @@ def handle_text_query(llm, query_text, session_id="default_session"):
 
 # --- MULTIMODAL QUERY (TEXT + IMAGE) ---
 PROMPT_TEMPLATE_VISION = """
-Bạn là một trợ lý AI thông minh. Dựa vào hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
+Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+
+Dựa vào lịch sử trò chuyện, hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trảLợi chi tiết, chính xác và hữu ích.
 Trả lời bằng tiếng Việt.
 
 Lịch sử trò chuyện: {chat_history}
