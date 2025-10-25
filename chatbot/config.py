@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 
-current_dir = Path(__file__).parent.resolve()
+current_dir = Path(__file__).parent.resolve().parent
 env_path = current_dir / ".env"
 
 load_dotenv(dotenv_path=env_path, verbose=True)
@@ -22,7 +22,7 @@ RERANK_MODEL_NAME = "rerank-multilingual-v3.0"
 LLAMA_PARSE_MODEL = "anthropic-sonnet-4.5"
 
 # --- DATABASE ---
-VECTORSTORE_PATH = str(current_dir / "vectorstores" / "chroma_db_2")
+VECTORSTORE_PATH = str(current_dir / "chatbot"/ "vectorstores" / "chroma_db_2")
 print(f"Using absolute VECTORSTORE_PATH: {VECTORSTORE_PATH}")
 COLLECTION_NAME = "docs_cusc"
 
