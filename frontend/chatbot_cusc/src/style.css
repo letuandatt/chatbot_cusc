@@ -1,0 +1,658 @@
+/* --- 1. CSS Variables & Base Styles --- */
+:root {
+  --bg-primary: #111319; /* Slightly darker main background */
+  --bg-secondary: #1a1d24; /* Background for sidebar, input area */
+  --bg-tertiary: #252a33; /* Message bubbles, hover states */
+  --bg-accent: #3b82f6; /* Accent color (blue) */
+  --bg-accent-gradient: linear-gradient(135deg, #3b82f6, #2563eb);
+  --text-primary: #e5e7eb; /* Main text */
+  --text-secondary: #9ca3af; /* Muted text (metadata) */
+  --text-accent: #ffffff; /* Text on accent background */
+  --border-color: #374151; /* Subtle borders */
+  --border-radius-base: 8px; /* Consistent rounded corners */
+  --border-radius-lg: 12px; /* Larger rounded corners */
+  --font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.15);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  line-height: 1.6;
+}
+
+/* --- 2. Main Application Layout --- */
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* --- 3. Sidebar (Session List) --- */
+/* --- 3. SIDEBAR (Session List - Refined) --- */
+.sessions {
+  width: 280px; /* Chiều rộng cố định */
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  display: flex; /* Bật Flexbox */
+  flex-direction: column; /* Sắp xếp dọc */
+  overflow: hidden; /* Ẩn overflow tổng thể */
+  flex-shrink: 0; /* Không cho co lại */
+}
+
+/* === Sidebar Header === */
+.sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0; /* Không co lại khi nội dung dài */
+  /* Tiêu đề nhỏ (tùy chọn) */
+  /* display: flex;
+  justify-content: space-between;
+  align-items: center; */
+}
+.sidebar-header h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px; /* Khoảng cách với nút New */
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+}
+
+/* Nút trong Sidebar Header */
+.sidebar-header .btn-group {
+  display: flex;
+  gap: 8px;
+}
+.sidebar-header .btn {
+  flex-grow: 1; /* Nút New chiếm phần lớn */
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+.sidebar-header .btn.ghost {
+  padding: 7px 10px; /* Điều chỉnh cho border */
+  flex-grow: 0; /* Nút Ghost không giãn ra */
+}
+.sidebar-header .btn.danger {
+  padding: 7px 10px; /* Điều chỉnh cho border */
+}
+
+/* === Session List Items Area === */
+.session-list-items {
+  flex-grow: 1; /* Chiếm hết không gian còn lại */
+  overflow-y: auto; /* Cho phép cuộn */
+  padding: 8px 8px 16px 8px; /* Padding xung quanh danh sách */
+}
+
+.loading-text, .no-sessions {
+  color: var(--text-secondary);
+  padding: 30px 16px;
+  text-align: center;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+/* === Session Item Wrapper (Layout) === */
+.session-item-wrapper {
+  display: flex;
+  align-items: center;
+  border-radius: var(--border-radius-base); /* Bo góc cả wrapper */
+  margin-bottom: 2px; /* Khoảng cách nhỏ giữa các item */
+  transition: background-color 0.15s ease;
+  position: relative; /* Để chứa nút */
+}
+.session-item-wrapper:hover {
+   background-color: var(--bg-tertiary); /* Highlight nền khi hover */
+}
+/* Hiển thị nút khi hover wrapper */
+.session-item-wrapper .btn-edit,
+.session-item-wrapper .btn-delete {
+  opacity: 0; /* Ẩn nút mặc định */
+  transition: opacity 0.15s ease;
+}
+.session-item-wrapper:hover .btn-edit,
+.session-item-wrapper:hover .btn-delete {
+  opacity: 0.7; /* Hiện nút mờ khi hover */
+}
+.session-item-wrapper .btn-edit:hover,
+.session-item-wrapper .btn-delete:hover {
+  opacity: 1; /* Hiện rõ nút khi hover chính nó */
+}
+
+/* === Session Item (Clickable Area) === */
+.session-item {
+  flex-grow: 1; /* Phần click chiếm phần lớn */
+  padding: 10px 12px; /* Padding bên trong */
+  border-radius: var(--border-radius-base); /* Đảm bảo bo góc */
+  cursor: pointer;
+  overflow: hidden; /* Giấu phần tràn của text */
+}
+
+/* State Active tinh tế hơn */
+.session-item.active {
+  background-color: rgba(59, 130, 246, 0.15); /* Nền xanh mờ hơn */
+  /* box-shadow: inset 2px 0 0 0 var(--bg-accent); */ /* Viền trái (tùy chọn) */
+}
+.session-item.active strong {
+   color: var(--text-primary); /* Đảm bảo text rõ khi active */
+}
+
+/* Tên Session */
+.session-item strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500; /* Độ đậm vừa phải */
+  color: var(--text-secondary); /* Màu mờ hơn mặc định */
+  transition: color 0.15s ease;
+}
+.session-item:hover strong,
+.session-item.active strong {
+  color: var(--text-primary); /* Rõ hơn khi hover/active */
+}
+
+/* Metadata (Ngày tháng) */
+.meta.date {
+    font-size: 0.7rem;
+    color: #6b7280; /* Màu xám tối hơn cho metadata */
+    margin-top: 3px;
+    white-space: nowrap;
+}
+.session-item.active .meta.date {
+    color: var(--text-secondary); /* Sáng hơn chút khi active */
+}
+
+/* === Nút Edit/Delete === */
+.btn-edit, .btn-delete {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  flex-shrink: 0; /* Không co lại */
+  /* opacity và transition được xử lý ở wrapper hover */
+}
+.btn-edit {
+  font-size: 0.9rem;
+  margin-left: auto; /* Đẩy về cuối */
+}
+.btn-edit:hover {
+  color: var(--bg-accent);
+}
+.btn-delete {
+  font-size: 0.9rem;
+  margin-left: 0px; /* Sát nút edit */
+}
+.btn-delete:hover {
+  color: #f87171;
+}
+
+/* --- 4. Main Chat Area --- */
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-primary);
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+.header {
+  padding: 12px 24px; /* Adjust padding */
+  border-bottom: 1px solid var(--border-color);
+  font-size: 1rem; /* Slightly smaller header */
+  font-weight: 600;
+  color: var(--text-primary);
+  background-color: rgba(17, 19, 25, 0.8); /* Semi-transparent header */
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 10; /* Ensure header stays on top */
+}
+
+.header .meta {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+/* --- 5. Message History Area --- */
+.history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px; /* Adjust padding */
+  display: flex;
+  flex-direction: column;
+  gap: 20px; /* Increased gap between messages */
+  scroll-behavior: smooth;
+}
+
+/* --- 6. Message Bubbles --- */
+.msg {
+  max-width: 47%; /* Slightly wider max width */
+  padding: 12px 18px; /* Adjust padding */
+  border-radius: var(--border-radius-lg); /* Softer corners */
+  line-height: 1.6;
+  white-space: pre-line;
+  word-wrap: break-word; /* Use word-wrap for better breaking */
+  box-shadow: var(--shadow-sm);
+  animation: fadeIn 0.3s ease-out;
+  position: relative; /* Needed for potential logo positioning */
+  display: flex; /* Use flex for logo alignment */
+  gap: 10px; /* Space between logo and text */
+}
+
+.msg.user {
+  align-self: flex-end !important;
+  background: var(--bg-accent-gradient);
+  color: var(--text-accent);
+  border-bottom-right-radius: 4px; /* Keep the 'tail' */
+  border-bottom-left-radius: var(--border-radius-lg); /* Bo góc còn lại */
+  margin-left: auto;
+}
+
+.msg.assistant {
+  align-self: flex-start !important;
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-bottom-left-radius: 4px; /* Keep the 'tail' */
+  border-bottom-right-radius: var(--border-radius-lg);
+  margin-right: auto;
+}
+
+/* Styles for code blocks within messages (optional, if using markdown) */
+.msg pre {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  border-radius: var(--border-radius-base);
+  overflow-x: auto;
+  margin: 10px 0;
+  font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+  font-size: 0.75rem;
+}
+.msg code {
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    background-color: rgba(255, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 0.75em;
+}
+
+/* Style images inside messages */
+.msg img {
+    max-width: 100%; /* Ensure image fits bubble */
+    max-height: 200px; /* Limit image height */
+    border-radius: var(--border-radius-base);
+    margin-top: 10px;
+    display: block;
+}
+
+/* Style chung cho ảnh trong tin nhắn */
+.msg img,
+.msg .msg-image { /* Target cả class mới nếu dùng */
+    max-width: 100%;
+    max-height: 300px; /* Chiều cao tối đa cho ảnh của AI */
+    border-radius: var(--border-radius-base);
+    /*margin-top: 5px;*/
+    display: flex;
+    cursor: pointer; /* Thêm con trỏ để biết có thể click */
+    transition: transform 0.3s ease; /* Hiệu ứng zoom nhẹ */
+}
+.msg img:hover,
+.msg .msg-image:hover {
+    transform: scale(1.02); /* Zoom nhẹ khi hover */
+}
+
+/* --- THÊM QUY TẮC NÀY --- */
+/* Style RIÊNG cho ảnh trong tin nhắn USER (nhỏ hơn) */
+.msg.user img,
+.msg.user .msg-image {
+    max-width: 200px;  /* Giới hạn chiều rộng ảnh user */
+    max-height: 150px; /* Giới hạn chiều cao ảnh user */
+    object-fit: cover; /* Đảm bảo ảnh không bị méo khi thu nhỏ */
+}
+
+.msg-content {
+    flex-grow: 1; /* Cho phép nội dung chiếm không gian còn lại */
+    /* Đảm bảo word-wrap hoạt động tốt bên trong flex item */
+    min-width: 0;
+}
+
+/* Định dạng Link (thẻ <a>) bên trong tin nhắn */
+.msg-content a {
+    color: var(--bg-accent); /* Màu xanh accent */
+    text-decoration: underline;
+    text-decoration-thickness: 1px; /* Nét gạch chân mỏng */
+    text-underline-offset: 3px; /* Khoảng cách gạch chân với chữ */
+    transition: color 0.2s ease;
+}
+.msg-content a:hover {
+    color: #60a5fa; /* Sáng hơn khi hover */
+    text-decoration-thickness: 2px;
+}
+
+/* Định dạng Danh sách (<ul>, <ol>) */
+.msg-content ul,
+.msg-content ol {
+    padding-left: 24px; /* Thụt lề danh sách */
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+.msg-content li {
+    margin-bottom: 4px; /* Khoảng cách giữa các mục */
+}
+
+/* Định dạng Code Inline (`<code>` không nằm trong `<pre>`) */
+/* Ghi đè style code cũ nếu cần */
+.msg-content code:not(pre code) {
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    background-color: rgba(255, 255, 255, 0.12); /* Nền tối hơn chút */
+    color: #f3c27a; /* Màu cam nhẹ cho code inline */
+    padding: 3px 6px; /* Padding lớn hơn */
+    border-radius: 5px; /* Bo góc nhẹ */
+    font-size: 0.88em; /* Cỡ chữ phù hợp */
+    /* word-break: break-all; */ /* Cân nhắc nếu code quá dài */
+}
+
+
+/* Định dạng Code Block (`<pre><code>`) */
+/* Ghi đè style pre cũ nếu cần */
+.msg-content pre {
+  background-color: rgba(0, 0, 0, 0.4); /* Nền tối hơn, trong suốt hơn */
+  padding: 14px 18px; /* Padding lớn hơn */
+  border-radius: var(--border-radius-base);
+  overflow-x: auto; /* Cho phép cuộn ngang */
+  margin: 12px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08); /* Thêm viền nhẹ */
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3); /* Thêm bóng đổ bên trong */
+}
+.msg-content pre code {
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    background-color: transparent; /* Bỏ nền của code bên trong pre */
+    color: #a7c1e0; /* Màu code block sáng hơn */
+    padding: 0; /* Bỏ padding của code bên trong pre */
+    border-radius: 0;
+    font-size: 0.85rem; /* Cỡ chữ code block */
+    white-space: pre; /* Giữ nguyên khoảng trắng và xuống dòng */
+}
+
+/* Định dạng Chữ đậm và nghiêng (do Markdown tạo ra) */
+.msg-content strong {
+    font-weight: 600; /* Đậm hơn một chút */
+}
+.msg-content em {
+    font-style: italic;
+}
+
+/* --- 7. Typing Indicator --- */
+.typing {
+  color: var(--text-secondary);
+  font-style: normal; /* Remove italic */
+  display: inline-block; /* Needed for animation */
+  animation: typing-blink 1.2s infinite steps(1);
+}
+
+@keyframes typing-blink {
+  50% { opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* --- 8. INPUT AREA (modern style) --- */
+.input-area {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: rgba(26, 29, 36, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+
+}
+
+/* === Text Input === */
+.input-area input[type="text"] {
+  flex-grow: 1;
+  height: 52px; /* cao hơn, dễ nhìn hơn */
+  padding: 0 20px;
+  font-size: 1.05rem;
+  border-radius: 28px; /* bo tròn lớn hơn */
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07); /* màu nền xám mờ, không trắng */
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.25s ease;
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+/* Hover và focus đẹp mắt hơn */
+.input-area input[type="text"]:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.input-area input[type="text"]:focus {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow:
+    0 0 0 4px rgba(59, 130, 246, 0.25),
+    inset 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Placeholder tinh tế */
+.input-area input[type="text"]::placeholder {
+  color: rgba(229, 231, 235, 0.6);
+  font-size: 0.95rem;
+  letter-spacing: 0.2px;
+}
+
+@media (max-width: 900px) {
+  .input-area input[type="text"] {
+    padding: 14px 18px;
+    font-size: 1rem;
+  }
+}
+
+/* === File Input === */
+.input-area input[type="file"] {
+  opacity: 0;
+  width: 0.1px;
+  height: 0.1px;
+  position: absolute;
+  overflow: hidden;
+  z-index: -1;
+}
+
+/* Custom upload button */
+.input-area .file-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.25s ease;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.input-area .file-label:hover {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--text-primary);
+  border-color: rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Upload icon */
+.input-area .file-label::before {
+  content: '📎';
+  font-size: 1.1rem;
+  margin-right: 2px;
+  opacity: 0.8;
+}
+
+/* File name display */
+.input-area .file-name {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === Send Button === */
+.input-area .btn.send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-accent-gradient);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 24px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  flex-shrink: 0;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+}
+.input-area .btn.send:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.45);
+}
+
+/* Optional icon inside Send button */
+.input-area .btn.send::after {
+  content: '➤';
+  font-size: 1.1rem;
+  margin-left: 8px;
+  transition: transform 0.2s ease;
+}
+.input-area .btn.send:hover::after {
+  transform: translateX(3px);
+}
+
+/* === Responsive === */
+@media (max-width: 900px) {
+  .input-area {
+    padding: 12px;
+  }
+  .input-area input[type="text"] {
+    padding: 10px 14px;
+    font-size: 0.95rem;
+  }
+  .input-area .file-label {
+    padding: 8px 10px;
+  }
+  .input-area .btn.send {
+    padding: 10px 14px;
+    font-size: 0.9rem;
+  }
+}
+
+
+/* --- 9. Buttons --- */
+.btn {
+  background: var(--bg-accent-gradient);
+  color: var(--text-accent);
+  border: none;
+  padding: 10px 16px;
+  border-radius: var(--border-radius-base);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: filter 0.2s ease, box-shadow 0.2s ease;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:hover {
+  filter: brightness(1.1);
+  box-shadow: var(--shadow-md);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(50%);
+  box-shadow: none;
+}
+
+/* Ghost button style */
+.btn.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+}
+
+.btn.ghost:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  filter: none; /* Reset filter */
+  box-shadow: var(--shadow-sm);
+}
+
+/* Specific buttons in header/sidebar */
+.header .btn.ghost,
+.sessions .btn.ghost {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+.sessions .btn { /* Primary button in sidebar */
+    padding: 8px 14px;
+    font-size: 0.85rem;
+}
+
+
+/* --- 10. Scrollbar Styling --- */
+/* Works on Webkit browsers (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent; /* Make track invisible */
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  border: none; /* Remove border */
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+/* For Firefox (limited styling) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
