@@ -4,6 +4,7 @@ import base64
 import config
 import uuid
 import gridfs
+import functools
 
 from datetime import datetime, timezone
 from pymongo import MongoClient, ASCENDING, DESCENDING
@@ -20,7 +21,6 @@ from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
-
 
 # --- MONGODB CONNECTION ---
 try:
@@ -195,6 +195,59 @@ def initialize_llm(model_name, temperature):
     )
 
 
+# --- RAG COMPONENTS ---
+try:
+    RAG_EMBEDDING_MODEL = GoogleGenerativeAIEmbeddings(
+        model=config.EMBEDDING_MODEL_NAME,
+        google_api_key=config.GOOGLE_API_KEY
+    )
+
+    DB_CHROMA = Chroma(
+        persist_directory=config.VECTORSTORE_PATH,
+        embedding_function=RAG_EMBEDDING_MODEL,
+        collection_name=config.COLLECTION_NAME
+    )
+
+    BASE_RETRIEVER = DB_CHROMA.as_retriever(search_kwargs={"k": config.RAG_RETRIEVER_K})
+
+    BASE_COMPRESSOR = CohereRerank(
+        top_n=config.RAG_RERANKER_TOP_N,
+        model=config.RERANK_MODEL_NAME,
+        cohere_api_key=config.COHERE_API_KEY
+    )
+
+    GLOBAL_RETRIEVER = ContextualCompressionRetriever(
+        base_compressor=BASE_COMPRESSOR,
+        base_retriever=BASE_RETRIEVER,
+    )
+    print("RAG pipeline components initialized successfully.")
+
+except Exception as e:
+    print(f"Failed to initialize RAG pipeline: {e}")
+    GLOBAL_RETRIEVER = None
+
+
+# Lưu 128 kết quả truy vấn gần nhất
+@functools.lru_cache(maxsize=128)
+def get_retrieved_docs(query: str):
+    """
+    Hàm này lấy tài liệu đã được Rerank.
+    Nó được cache lại để tăng hiệu suất.
+    Nó được bọc try/except để đảm bảo ổn định.
+    """
+    retriever = GLOBAL_RETRIEVER
+    if retriever is None:
+        print("Lỗi: GLOBAL_RETRIEVER chưa được khởi tạo.")
+        return []
+
+    try:
+        retrieved_docs = retriever.invoke(query)
+        return retrieved_docs
+    except Exception as e:
+        print(f"Failed to retrieve docs for query: {query}, error: {e}")
+        return []
+
+
 # --- RAG PIPELINE (TEXT) ---
 PROMPT_TEMPLATE_RAG = """
 Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
@@ -241,28 +294,6 @@ def get_session_history(session_id: str):
 def handle_text_query(llm, query_text, session_id="default_session"):
     print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
 
-    embedding_model = GoogleGenerativeAIEmbeddings(
-        model=config.EMBEDDING_MODEL_NAME,
-        google_api_key=config.GOOGLE_API_KEY
-    )
-
-    db = Chroma(
-        persist_directory=config.VECTORSTORE_PATH,
-        embedding_function=embedding_model,
-        collection_name=config.COLLECTION_NAME
-    )
-
-    base_retriever = db.as_retriever(search_kwargs={"k": config.RAG_RETRIEVER_K})
-    base_compressor = CohereRerank(
-        top_n=config.RAG_RERANKER_TOP_N,
-        model=config.RERANK_MODEL_NAME,
-        cohere_api_key=config.COHERE_API_KEY
-    )
-    retriever = ContextualCompressionRetriever(
-        base_compressor=base_compressor,
-        base_retriever=base_retriever,
-    )
-
     def format_docs(docs):
         return "\n\n".join([
             f"Nội dung Chunk: {doc.page_content}\n"
@@ -273,12 +304,12 @@ def handle_text_query(llm, query_text, session_id="default_session"):
 
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE_RAG)
     base_rag_chain = (
-        {"context": lambda x: format_docs(retriever.invoke(x["question"])),
-         "question": lambda x: x["question"],
-         "chat_history": lambda x: x.get("chat_history", [])}
-        | prompt
-        | llm
-        | StrOutputParser()
+            {"context": lambda x: format_docs(get_retrieved_docs(x["question"])),
+             "question": lambda x: x["question"],
+             "chat_history": lambda x: x.get("chat_history", [])}
+            | prompt
+            | llm
+            | StrOutputParser()
     )
 
     rag_chain_with_history = RunnableWithMessageHistory(
