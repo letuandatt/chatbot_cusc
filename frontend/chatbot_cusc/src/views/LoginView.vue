@@ -2,7 +2,7 @@
   <div class="auth-page">
     <div class="auth-form">
       <img src="../assets/20181031cusc.png" alt="Logo" class="auth-logo">
-      <h2>Đăng nhập ChatCUSC</h2>
+      <h2>ChatCUSC</h2>
       <form @submit.prevent="handleLogin">
         <div class="form-group">
           <label for="email">Email:</label>

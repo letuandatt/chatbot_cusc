@@ -104,8 +104,16 @@ const formatDate = (isoString) => {
    if (!isoString) return 'N/A';
       try {
         const date = new Date(isoString);
-        return date.toLocaleString('vi-VN', { /* ... options ... */ });
-      } catch { return isoString; }
+        return date.toLocaleString('vi-VN', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } catch {
+        return isoString; // Trả về chuỗi gốc nếu không parse được
+      }
 };
 
 const handleChangePassword = async () => {
