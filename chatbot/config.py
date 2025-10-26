@@ -15,8 +15,8 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
 
 # --- LLM MODELS ---
-TEXT_MODEL_NAME = "gemini-2.5-pro"
-VISION_MODEL_NAME = "gemini-2.5-pro"
+TEXT_MODEL_NAME = "gemini-2.5-flash"
+VISION_MODEL_NAME = "gemini-2.5-flash"
 EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 RERANK_MODEL_NAME = "rerank-multilingual-v3.0"
 LLAMA_PARSE_MODEL = "anthropic-sonnet-4.5"
