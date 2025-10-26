@@ -4,6 +4,7 @@ import base64
 import uuid
 import gridfs
 import functools
+import pytz
 
 from chatbot import config
 
@@ -110,6 +111,14 @@ except Exception as e:
     print(f"Failed to initialize RAG pipeline: {e}")
     GLOBAL_RETRIEVER = None
 
+# --- VIETNAM TIMEZONE DEFINITION ---
+try:
+    VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
+    print("VN_TZ initialized successfully.")
+except pytz.UnknownTimeZoneError:
+    print("VN_TZ not found, using UTC as default timezone.")
+    VN_TZ = timezone.utc
+
 
 # --- LLM MODEL ---
 def initialize_llm(model_name, temperature):
@@ -143,7 +152,7 @@ def save_session_message(session_id, user_id, question, answer, image_path=None)
         print("Lỗi: Không thể lưu session, DB hoặc GridFS chưa kết nối.")
         return
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(VN_TZ).isoformat()
 
     image_gridfs_id = None
 
@@ -172,7 +181,7 @@ def save_session_message(session_id, user_id, question, answer, image_path=None)
         {
             "role": "assistant",
             "content": answer,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(VN_TZ).isoformat()
         }
     ]
 
@@ -180,7 +189,7 @@ def save_session_message(session_id, user_id, question, answer, image_path=None)
         {"session_id": session_id, "user_id": user_id},
         {
             "$push": {"messages": {"$each": new_messages}},
-            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
+            "$set": {"updated_at": datetime.now(VN_TZ).isoformat()},
             "$setOnInsert": {  # <-- Chỉ set các trường này khi TẠO MỚI
                 "created_at": now
             }
