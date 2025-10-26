@@ -15,8 +15,8 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
 
 # --- LLM MODELS ---
-TEXT_MODEL_NAME = "gemini-2.5-flash"
-VISION_MODEL_NAME = "gemini-2.5-flash"
+TEXT_MODEL_NAME = "gemini-2.5-pro"
+VISION_MODEL_NAME = "gemini-2.5-pro"
 EMBEDDING_MODEL_NAME = "models/text-embedding-004"
 RERANK_MODEL_NAME = "rerank-multilingual-v3.0"
 LLAMA_PARSE_MODEL = "anthropic-sonnet-4.5"
@@ -37,3 +37,8 @@ PARSE_SAVE_DIR = str(current_dir / "data" / "after_parse")
 # --- MONGODB ---
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = "Chatbot_CUSC"
+
+# --- JWT SECRET KEY ---
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
