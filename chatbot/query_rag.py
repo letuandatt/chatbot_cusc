@@ -18,7 +18,7 @@ from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough, ConfigurableFieldSpec
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
@@ -55,9 +55,28 @@ except Exception as e:
     FS = None
 
 
-def get_mongo_collection():
+def get_mongo_collection(collection_name: str = "sessions"):
     """Trả về collection 'sessions' đã được khởi tạo."""
-    return DB_COLLECTION
+    if _mongo_client is None or _mongo_db is None:
+        print(f"Lỗi: Kết nối MongoDB chưa được thiết lập")
+        return None
+    try:
+        return _mongo_db[collection_name]
+    except Exception as ex:
+        print(f"Lỗi khi lấy collection '{collection_name}': {ex}")
+        return None
+
+def check_session_belongs_to_user(session_id: str, user_id: str) -> bool:
+    """Kiểm tra session có tồn tại và thuộc về user_id không."""
+    coll = get_mongo_collection("sessions")  # Lấy collection sessions
+    if coll is None:
+        return False
+    try:
+        # Đếm số document khớp cả session_id và user_id
+        return coll.count_documents({"session_id": session_id, "user_id": user_id}, limit=1) > 0
+    except Exception as e:
+        print(f"Lỗi khi kiểm tra session ownership: {e}")
+        return False
 
 
 # --- RAG COMPONENTS ---
@@ -116,7 +135,7 @@ except Exception as e:
 # ==============================================================================
 
 # --- SESSION MANAGEMENT (MONGO) ---
-def save_session_message(session_id, question, answer, image_path=None):
+def save_session_message(session_id, user_id, question, answer, image_path=None):
     """Lưu câu hỏi và câu trả lời vào MongoDB (bản tối ưu)."""
     coll = get_mongo_collection()
     fs_client = FS
@@ -158,7 +177,7 @@ def save_session_message(session_id, question, answer, image_path=None):
     ]
 
     coll.update_one(
-        {"session_id": session_id},
+        {"session_id": session_id, "user_id": user_id},
         {
             "$push": {"messages": {"$each": new_messages}},
             "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
@@ -170,9 +189,9 @@ def save_session_message(session_id, question, answer, image_path=None):
     )
 
 
-def load_session_messages(session_id, max_history_message: int = 50):
+def load_session_messages(session_id: str, user_id: str, max_history_message: int = 50):
     """Load lịch sử hội thoại từ MongoDB."""
-    coll = get_mongo_collection()
+    coll = get_mongo_collection("sessions")
     fs_client = FS
     if coll is None or fs_client is None:
         return InMemoryChatMessageHistory()
@@ -181,11 +200,12 @@ def load_session_messages(session_id, max_history_message: int = 50):
 
     try:
         session_doc = coll.find_one(
-            {"session_id": session_id},
+            {"session_id": session_id, "user_id": user_id},
             projection={"messages": {"$slice": -max_history_message}}
         )
 
         if not session_doc:
+            print(f"DEBUG: Session {session_id} not found or doesn't belong to user {user_id}")
             return history
 
         for msg in session_doc.get("messages", []):
@@ -214,13 +234,16 @@ def load_session_messages(session_id, max_history_message: int = 50):
     return history
 
 
-def list_sessions(limit=50):
+def list_sessions(user_id: str, limit=50):
     """Liệt kê các session (đã tối ưu) mà không tải messages."""
-    coll = get_mongo_collection()
+    coll = get_mongo_collection("sessions")
     if coll is None:
         return []
 
     pipeline = [
+        {
+            "$match": {"user_id": user_id}
+        },
         {
             "$project": {  # Chỉ lấy các trường này
                 "_id": 0,
@@ -303,14 +326,10 @@ def format_docs(docs):
 
 
 # --- MEMORY MANAGEMENT ---
-message_history_store = {}
-
-
-def get_session_history(session_id: str):
-    """Lấy lịch sử chat trong bộ nhớ."""
-    if session_id not in message_history_store:
-        message_history_store[session_id] = load_session_messages(session_id)
-    return message_history_store[session_id]
+def get_session_history(session_id: str, user_id: str):
+    """Lấy lịch sử chat TRỰC TIẾP từ MongoDB cho user cụ thể."""
+    print(f"--- DEBUG: Loading history for session '{session_id}' / user '{user_id}' from DB ---")
+    return load_session_messages(session_id, user_id)
 
 
 # ==============================================================================
@@ -396,6 +415,9 @@ def create_rag_router_chain(llm, retriever):
         print("Lỗi: Không thể tạo RAG chain do thiếu LLM hoặc Retriever.")
         return None
 
+    def get_history_for_request(session_id: str, user_id: str):
+        return get_session_history(session_id, user_id)
+
     # --- Định nghĩa các chain con ---
     router_chain = ROUTER_PROMPT_TEMPLATE | llm | StrOutputParser()
     rag_chain = (
@@ -440,9 +462,13 @@ def create_rag_router_chain(llm, retriever):
     # --- Bọc bộ nhớ ---
     chain_with_history = RunnableWithMessageHistory(
         base,
-        get_session_history,
+        get_history_for_request,
         input_messages_key="question",
         history_messages_key="chat_history",
+        history_factory_config=[
+            ConfigurableFieldSpec(id="user_id", annotation=str, name="User ID"),
+            ConfigurableFieldSpec(id="session_id", annotation=str, name="Session ID"),
+        ]
     )
     return chain_with_history
 
@@ -474,15 +500,23 @@ def create_vision_chain(llm):
         image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
         return HumanMessage(content=[{"type": "text", "text": question}, image_data])
 
+    def get_history_for_request(session_id: str, user_id: str):
+        return get_session_history(session_id, user_id)
+
     # --- Chain cơ sở ---
     base_vision = RunnablePassthrough() | RunnableLambda(_format_vision_message) | llm
 
     # --- Bọc bộ nhớ ---
     vision_chain_with_history = RunnableWithMessageHistory(
-        base_vision, get_session_history,
+        base_vision,
+        get_history_for_request,
         input_messages_key="question",
         input_messages_key_fx=RunnableLambda(_format_history_input),
         history_messages_key="chat_history",
+        history_factory_config=[
+            ConfigurableFieldSpec(id="user_id", annotation=str, name="User ID"),
+            ConfigurableFieldSpec(id="session_id", annotation=str, name="Session ID"),
+        ]
     )
     return vision_chain_with_history
 
