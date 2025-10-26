@@ -3,6 +3,7 @@ import os
 import traceback
 import tempfile  # Sử dụng thư mục tạm an toàn hơn
 import shutil
+import pytz
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, status
 from fastapi.responses import StreamingResponse  # <-- Quan trọng cho streaming
@@ -51,6 +52,13 @@ except Exception as e:
     FS = None
 
 
+# --- ĐỊNH NGHĨA MÚI GIỜ VIỆT NAM ---
+try:
+    VN_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
+    print("VN_TZ initialized successfully.")
+except pytz.UnknownTimeZoneError:
+    print("VN_TZ not found, using UTC as default timezone.")
+    VN_TZ = timezone.utc
 app = FastAPI(
     title="RAG API Service",
     description="FastAPI backend for RAG-based AI assistant",
@@ -87,7 +95,7 @@ class ChangePasswordRequest(BaseModel):
 
 # --- Rename Session Request Model ---
 class RenameSessionRequest(BaseModel):
-    new_name: str # Định nghĩa dữ liệu cần gửi lên: tên mới
+    new_name: str  # Định nghĩa dữ liệu cần gửi lên: tên mới
 
 
 # --- Health check ---
@@ -118,7 +126,7 @@ def health_check():
             "text_llm": text_llm_ok,
             "vision_llm": vision_llm_ok
         },
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(VN_TZ).isoformat()
     }
 
 # --- Authentication Endpoints ---
@@ -134,7 +142,7 @@ def register_user(user: UserCreate):
         raise HTTPException(status_code=400, detail="User already exists")
 
     hashed_password = get_password_hash(user.password)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(VN_TZ).isoformat()
     new_user_data = {
         "email": user.email,
         "hashed_password": hashed_password,
@@ -176,8 +184,8 @@ async def create_new_session(current_user_id: str = Depends(get_current_user_id)
     if sessions_coll is None:
         raise HTTPException(status_code=503, detail="Failed to connect to MongoDB")
 
-    now = datetime.now(timezone.utc).isoformat()
-    default_name = f"Chat {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S')}"
+    now = datetime.now(VN_TZ).isoformat()
+    default_name = f"Chat {datetime.now(VN_TZ).strftime('%d/%m/%Y %H:%M:%S')}"
     try:
         sessions_coll.insert_one({
             "session_id": session_id,
@@ -213,7 +221,7 @@ def rename_session(session_id: str, request: RenameSessionRequest, current_user_
             {"session_id": session_id, "user_id": current_user_id},
             {"$set": {
                 "session_name": new_name,
-                "updated_at": datetime.now(timezone.utc).isoformat()
+                "updated_at": datetime.now(VN_TZ).isoformat()
             }}
         )
         if result.matched_count == 0:
