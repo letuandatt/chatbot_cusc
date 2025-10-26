@@ -53,6 +53,7 @@ export const useAuthStore = defineStore('auth', {
             throw new Error("Đăng nhập thất bại: Không nhận được token.");
         }
         this._setToken(accessToken); // Lưu token
+        localStorage.removeItem('current_session');
         await router.push('/'); // Chuyển hướng về trang Chat
         return true; // Thành công
       } catch (err) {
@@ -89,6 +90,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       console.log("Đang đăng xuất...");
       this._setToken(null) // Xóa token
+      localStorage.removeItem('current_session');
       // Có thể thêm logic gọi API backend /logout nếu cần (để thu hồi token phía server)
       router.push('/login'); // Chuyển hướng về trang Login
     },

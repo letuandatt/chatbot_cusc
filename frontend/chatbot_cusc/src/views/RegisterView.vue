@@ -12,6 +12,10 @@
           <label for="password">Mật khẩu (ít nhất 8 ký tự):</label>
           <input type="password" id="password" v-model="password" required autocomplete="new-password">
         </div>
+        <div class="form-group">
+          <label for="password">Xác nhận mật khẩu:</label>
+          <input type="password" id="confirmPassword" v-model="confirmPassword" required autocomplete="new-password">
+        </div>
          <div v-if="authStore.error" class="error-message">
           {{ authStore.error }}
         </div>
@@ -33,14 +37,15 @@ import router from '../router' // Import router để chuyển hướng sau khi 
 
 const email = ref('')
 const password = ref('')
-// const confirmPassword = ref('') // Nếu có ô xác nhận
+const confirmPassword = ref('') // Nếu có ô xác nhận
 const authStore = useAuthStore()
 
 const handleRegister = async () => {
-  // if (password.value !== confirmPassword.value) {
-  //   authStore.error = "Mật khẩu xác nhận không khớp.";
-  //   return;
-  // }
+  if (password.value !== confirmPassword.value) {
+    authStore.error = "Mật khẩu xác nhận không khớp.";
+    return;
+  }
+  authStore.error = null;
   const success = await authStore.register(email.value, password.value)
   if (success) {
     alert('Đăng ký thành công! Vui lòng đăng nhập.');
