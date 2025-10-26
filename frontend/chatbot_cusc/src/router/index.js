@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
+import ProfileView from '../views/ProfileView.vue'
 // Import Pinia store để kiểm tra trạng thái đăng nhập
 import { useAuthStore } from '../stores/auth'
 
@@ -26,6 +27,12 @@ const routes = [
     component: RegisterView,
     meta: { requiresGuest: true } // Route này chỉ cho khách
   },
+    {
+        path: '/profile',
+        name: "Profile",
+        component: ProfileView,
+        meta: { requiresAuth: true }
+    },
    // Bắt các route không tồn tại, chuyển về trang Chat (nếu đã đăng nhập) hoặc Login
    { path: '/:pathMatch(.*)*', redirect: to => {
        const authStore = useAuthStore();

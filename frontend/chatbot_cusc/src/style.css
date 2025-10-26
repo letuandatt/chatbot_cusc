@@ -39,7 +39,6 @@ body {
 }
 
 /* --- 3. Sidebar (Session List) --- */
-/* --- 3. SIDEBAR (Session List - Refined) --- */
 .sessions {
   width: 280px; /* Chiều rộng cố định */
   background-color: var(--bg-secondary);
@@ -241,161 +240,332 @@ body {
   scroll-behavior: smooth;
 }
 
-/* --- 6. Message Bubbles --- */
+/* --- 6. Message Bubbles (REDESIGNED) --- */
 .msg {
-  max-width: 47%; /* Slightly wider max width */
-  padding: 12px 18px; /* Adjust padding */
-  border-radius: var(--border-radius-lg); /* Softer corners */
-  line-height: 1.6;
-  white-space: pre-line;
-  word-wrap: break-word; /* Use word-wrap for better breaking */
-  box-shadow: var(--shadow-sm);
-  animation: fadeIn 0.3s ease-out;
-  position: relative; /* Needed for potential logo positioning */
-  display: flex; /* Use flex for logo alignment */
-  gap: 10px; /* Space between logo and text */
+  max-width: 70%;
+  padding: 18px 22px;
+  border-radius: 16px;
+  line-height: 1.75;
+  word-wrap: break-word;
+  position: relative;
+  animation: messageEnter 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
+}
+
+@keyframes messageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(15px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .msg.user {
   align-self: flex-end !important;
-  background: var(--bg-accent-gradient);
-  color: var(--text-accent);
-  border-bottom-right-radius: 4px; /* Keep the 'tail' */
-  border-bottom-left-radius: var(--border-radius-lg); /* Bo góc còn lại */
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: #ffffff;
+  border-bottom-right-radius: 6px;
   margin-left: auto;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
 }
 
 .msg.assistant {
   align-self: flex-start !important;
-  background-color: var(--bg-tertiary);
+  background: linear-gradient(145deg, #1a1c24 0%, #13141a 100%);
   color: var(--text-primary);
-  border-bottom-left-radius: 4px; /* Keep the 'tail' */
-  border-bottom-right-radius: var(--border-radius-lg);
+  border-bottom-left-radius: 6px;
   margin-right: auto;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* Styles for code blocks within messages (optional, if using markdown) */
-.msg pre {
-  background-color: rgba(0, 0, 0, 0.3);
-  padding: 12px;
-  border-radius: var(--border-radius-base);
-  overflow-x: auto;
-  margin: 10px 0;
-  font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-  font-size: 0.75rem;
-}
-.msg code {
-    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-    background-color: rgba(255, 255, 255, 0.1);
-    padding: 2px 4px;
-    border-radius: 4px;
-    font-size: 0.75em;
-}
-
-/* Style images inside messages */
-.msg img {
-    max-width: 100%; /* Ensure image fits bubble */
-    max-height: 200px; /* Limit image height */
-    border-radius: var(--border-radius-base);
-    margin-top: 10px;
-    display: block;
-}
-
-/* Style chung cho ảnh trong tin nhắn */
-.msg img,
-.msg .msg-image { /* Target cả class mới nếu dùng */
-    max-width: 100%;
-    max-height: 300px; /* Chiều cao tối đa cho ảnh của AI */
-    border-radius: var(--border-radius-base);
-    /*margin-top: 5px;*/
-    display: flex;
-    cursor: pointer; /* Thêm con trỏ để biết có thể click */
-    transition: transform 0.3s ease; /* Hiệu ứng zoom nhẹ */
-}
-.msg img:hover,
-.msg .msg-image:hover {
-    transform: scale(1.02); /* Zoom nhẹ khi hover */
-}
-
-/* --- THÊM QUY TẮC NÀY --- */
-/* Style RIÊNG cho ảnh trong tin nhắn USER (nhỏ hơn) */
-.msg.user img,
-.msg.user .msg-image {
-    max-width: 200px;  /* Giới hạn chiều rộng ảnh user */
-    max-height: 150px; /* Giới hạn chiều cao ảnh user */
-    object-fit: cover; /* Đảm bảo ảnh không bị méo khi thu nhỏ */
-}
-
+/* Message Content Container */
 .msg-content {
-    flex-grow: 1; /* Cho phép nội dung chiếm không gian còn lại */
-    /* Đảm bảo word-wrap hoạt động tốt bên trong flex item */
-    min-width: 0;
+  flex-grow: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
 }
 
-/* Định dạng Link (thẻ <a>) bên trong tin nhắn */
+.msg.user .msg-content {
+  color: #ffffff;
+}
+
+.msg.assistant .msg-content {
+  color: var(--text-primary);
+}
+
+/* --- Links --- */
 .msg-content a {
-    color: var(--bg-accent); /* Màu xanh accent */
-    text-decoration: underline;
-    text-decoration-thickness: 1px; /* Nét gạch chân mỏng */
-    text-underline-offset: 3px; /* Khoảng cách gạch chân với chữ */
-    transition: color 0.2s ease;
-}
-.msg-content a:hover {
-    color: #60a5fa; /* Sáng hơn khi hover */
-    text-decoration-thickness: 2px;
+  color: #60a5fa;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(96, 165, 250, 0.4);
+  transition: all 0.2s ease;
+  padding-bottom: 1px;
 }
 
-/* Định dạng Danh sách (<ul>, <ol>) */
+.msg-content a:hover {
+  color: #93c5fd;
+  border-bottom-color: #93c5fd;
+}
+
+.msg.user .msg-content a {
+  color: #ffffff;
+  border-bottom-color: rgba(255, 255, 255, 0.5);
+}
+
+.msg.user .msg-content a:hover {
+  border-bottom-color: #ffffff;
+}
+
+/* --- Lists --- */
 .msg-content ul,
 .msg-content ol {
-    padding-left: 24px; /* Thụt lề danh sách */
-    margin-top: 8px;
-    margin-bottom: 8px;
-}
-.msg-content li {
-    margin-bottom: 4px; /* Khoảng cách giữa các mục */
-}
-
-/* Định dạng Code Inline (`<code>` không nằm trong `<pre>`) */
-/* Ghi đè style code cũ nếu cần */
-.msg-content code:not(pre code) {
-    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-    background-color: rgba(255, 255, 255, 0.12); /* Nền tối hơn chút */
-    color: #f3c27a; /* Màu cam nhẹ cho code inline */
-    padding: 3px 6px; /* Padding lớn hơn */
-    border-radius: 5px; /* Bo góc nhẹ */
-    font-size: 0.88em; /* Cỡ chữ phù hợp */
-    /* word-break: break-all; */ /* Cân nhắc nếu code quá dài */
-}
-
-
-/* Định dạng Code Block (`<pre><code>`) */
-/* Ghi đè style pre cũ nếu cần */
-.msg-content pre {
-  background-color: rgba(0, 0, 0, 0.4); /* Nền tối hơn, trong suốt hơn */
-  padding: 14px 18px; /* Padding lớn hơn */
-  border-radius: var(--border-radius-base);
-  overflow-x: auto; /* Cho phép cuộn ngang */
+  padding-left: 24px;
   margin: 12px 0;
-  border: 1px solid rgba(255, 255, 255, 0.08); /* Thêm viền nhẹ */
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3); /* Thêm bóng đổ bên trong */
-}
-.msg-content pre code {
-    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-    background-color: transparent; /* Bỏ nền của code bên trong pre */
-    color: #a7c1e0; /* Màu code block sáng hơn */
-    padding: 0; /* Bỏ padding của code bên trong pre */
-    border-radius: 0;
-    font-size: 0.85rem; /* Cỡ chữ code block */
-    white-space: pre; /* Giữ nguyên khoảng trắng và xuống dòng */
 }
 
-/* Định dạng Chữ đậm và nghiêng (do Markdown tạo ra) */
-.msg-content strong {
-    font-weight: 600; /* Đậm hơn một chút */
+.msg-content li {
+  margin-bottom: 6px;
+  padding-left: 4px;
 }
+
+.msg-content ul li::marker {
+  color: var(--bg-accent);
+}
+
+.msg.user .msg-content ul li::marker {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* --- Inline Code --- */
+.msg-content code:not(pre code) {
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fbbf24;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.88em;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+}
+
+.msg.user .msg-content code:not(pre code) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fef3c7;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* --- Code Blocks --- */
+.msg-content pre {
+  background: linear-gradient(145deg, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.4));
+  padding: 16px 20px;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 14px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
+  position: relative;
+}
+
+.msg-content pre::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+}
+
+.msg-content pre code {
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  background: transparent;
+  color: #e5e7eb;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: 0.88rem;
+  white-space: pre;
+  line-height: 1.6;
+}
+
+/* Syntax highlighting hint colors */
+.msg-content pre code .keyword {
+  color: #c792ea;
+}
+
+.msg-content pre code .string {
+  color: #c3e88d;
+}
+
+.msg-content pre code .comment {
+  color: #546e7a;
+  font-style: italic;
+}
+
+/* --- Text Formatting --- */
+.msg-content strong {
+  font-weight: 600;
+  color: inherit;
+}
+
+.msg.assistant .msg-content strong {
+  color: #f3f4f6;
+}
+
 .msg-content em {
-    font-style: italic;
+  font-style: italic;
+  color: inherit;
+}
+
+/* --- Paragraphs --- */
+.msg-content p {
+  margin: 0 0 12px 0;
+}
+
+.msg-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Headings inside messages --- */
+.msg-content h1,
+.msg-content h2,
+.msg-content h3,
+.msg-content h4 {
+  margin: 16px 0 10px 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.msg-content h1 {
+  font-size: 1.5rem;
+}
+
+.msg-content h2 {
+  font-size: 1.3rem;
+}
+
+.msg-content h3 {
+  font-size: 1.15rem;
+}
+
+.msg-content h4 {
+  font-size: 1rem;
+}
+
+.msg.user .msg-content h1,
+.msg.user .msg-content h2,
+.msg.user .msg-content h3,
+.msg.user .msg-content h4 {
+  color: #ffffff;
+}
+
+/* --- Blockquotes --- */
+.msg-content blockquote {
+  border-left: 3px solid rgba(99, 102, 241, 0.5);
+  padding-left: 16px;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.msg.user .msg-content blockquote {
+  border-left-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* --- Images --- */
+.msg-content img,
+.msg .msg-image {
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 12px;
+  display: block;
+  margin: 12px 0;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.msg-content img:hover,
+.msg .msg-image:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* User message images (smaller) */
+.msg.user img,
+.msg.user .msg-image {
+  max-width: 180px;
+  max-height: 180px;
+  object-fit: cover;
+}
+
+/* --- Tables --- */
+.msg-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  font-size: 0.9rem;
+}
+
+.msg-content table th,
+.msg-content table td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.msg-content table th {
+  background: rgba(0, 0, 0, 0.3);
+  font-weight: 600;
+}
+
+.msg-content table tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* --- Horizontal Rule --- */
+.msg-content hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 16px 0;
+}
+
+/* --- Selection inside messages --- */
+.msg-content ::selection {
+  background: rgba(99, 102, 241, 0.3);
+  color: inherit;
+}
+
+.msg.user .msg-content ::selection {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* --- Responsive adjustments --- */
+@media (max-width: 768px) {
+  .msg {
+    max-width: 85%;
+    padding: 14px 16px;
+    font-size: 0.92rem;
+  }
+
+  .msg-content code:not(pre code) {
+    font-size: 0.85em;
+  }
+
+  .msg-content pre {
+    padding: 12px 16px;
+  }
+
+  .msg-content pre code {
+    font-size: 0.85rem;
+  }
 }
 
 /* --- 7. Typing Indicator --- */

@@ -1,9 +1,9 @@
 <template>
   <div :class="['msg', roleClass]">
 
-    <div class="msg-logo">
-      <span v-if="role === 'user'">🧑‍💻</span> <span v-else>🤖</span>
-    </div>
+<!--    <div class="msg-logo">-->
+<!--      <span v-if="role === 'user'">🧑‍💻</span> <span v-else>🤖</span>-->
+<!--    </div>-->
 
     <div class="msg-content">
 
@@ -34,6 +34,7 @@
 
 <script>
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 export default {
   name: "MessageBubble",
@@ -52,21 +53,51 @@ export default {
     }
   },
   methods: {
-    // Hàm render markdown (nếu bạn muốn hỗ trợ)
     renderMarkdown(text) {
       if (typeof text !== 'string') return '';
-      // Cấu hình marked (tùy chọn)
+
+      // Cấu hình marked
       marked.setOptions({
-        breaks: false, // Chuyển đổi dấu xuống dòng thành <br>
-        gfm: true,    // Hỗ trợ GitHub Flavored Markdown
-        // Bạn có thể thêm các tùy chọn khác tại đây
+        // breaks: false, // TẮT: Không tự động chuyển \n thành <br>
+        gfm: true,    // BẬT: Hỗ trợ GitHub Flavored Markdown (quan trọng cho list, code block)
+        pedantic: false, // TẮT: Không quá khắt khe về cú pháp
+        sanitize: false, // TẮT: Không dùng bộ sanitize cũ của marked (sẽ dùng DOMPurify)
+        smartypants: false // TẮT: Không tự động đổi dấu ngoặc kép, etc.
       });
+
       try {
-        const cleanedText = text.replace(/ {2,}/g, ' ').replace(/\n{3,}/g, '\n\n'); // Loại bỏ khoảng trắng/xuống dòng thừa
-        return marked.parse(cleanedText);
+        // BƯỚC 1: Làm sạch text thô (loại bỏ khoảng trắng/xuống dòng thừa)
+        // - Thay thế 3+ dấu xuống dòng bằng 2 dấu (để giữ lại đoạn văn)
+        // - Thay thế 2+ dấu cách bằng 1 dấu cách
+        // - Xóa dấu cách ở đầu/cuối mỗi dòng
+        const cleanedText = text
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/ {2,}/g, ' ')
+            .split('\n').map(line => line.trim()).join('\n');
+
+        // BƯỚC 2: Parse Markdown thành HTML
+        const rawHtml = marked.parse(cleanedText);
+
+        // BƯỚC 3: Sanitize HTML (Quan trọng để tránh lỗi XSS)
+        // Sử dụng DOMPurify để loại bỏ các thẻ/thuộc tính nguy hiểm
+        const sanitizedHtml = DOMPurify.sanitize(rawHtml, {
+            USE_PROFILES: { html: true } // Cho phép các thẻ HTML an toàn
+        });
+
+        return sanitizedHtml;
+
       } catch (e) {
-        console.error("Markdown parsing error:", e);
-        return text; // Trả về text gốc nếu lỗi
+        console.error("Markdown parsing/sanitizing error:", e);
+        // Fallback: Hiển thị text gốc nhưng escape HTML để tránh XSS
+        const escapeHtml = (unsafe) => {
+           return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        return escapeHtml(text).replace(/\n/g, '<br>'); // Chỉ thay \n bằng <br> nếu lỗi
       }
     }
   }

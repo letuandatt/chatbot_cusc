@@ -9,6 +9,12 @@
             </span>
           </div>
       </div>
+      <div class="header-controls">
+<!--            <div class="meta" v-if="sessionId">Session: {{ sessionIdShort }}</div>-->
+            <router-link to="/profile" class="profile-button" title="Thông tin tài khoản">
+              👤
+            </router-link>
+          </div>
     </div>
 
     <div v-if="!sessionId" class="welcome-screen">
@@ -427,5 +433,30 @@ label.file-label[for="file-input"]:has(+ input[type="file"]:disabled) {
 }
 .clickable-title:hover {
   opacity: 0.8;
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.profile-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 1.2rem;
+    text-decoration: none;
+    transition: background-color 0.2s, color 0.2s;
+    border: 1px solid transparent;
+}
+.profile-button:hover {
+    background-color: #374151;
+    color: var(--text-primary);
+    border-color: var(--border-color);
 }
 </style>
