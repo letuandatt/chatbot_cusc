@@ -11,7 +11,7 @@
         <div v-for="(part, idx) in content" :key="idx">
 
           <template v-if="part?.type === 'text'">
-            <div v-html="part.text"></div>
+            <div v-html="renderMarkdown(part.text)"></div>
           </template>
 
           <template v-else-if="part?.type === 'image_url'">
@@ -19,7 +19,7 @@
           </template>
 
           <template v-else>
-            <div>{{ part }}</div>
+            <div>{{ renderMarkdown(part) }}</div>
           </template>
 
         </div>

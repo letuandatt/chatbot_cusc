@@ -27,16 +27,26 @@
       </div>
     </div>
 
+    <div class="sidebar-footer">
+      <button class="btn ghost logout-btn-bottom" @click="$emit('logout')" title="Logout">
+        🚪 Đăng xuất
+      </button>
+      <button class="btn ghost delete-account-btn" @click="confirmDeleteAccount" title="Delete Account">
+         ⚠️ Xóa Tài khoản
+       </button>
+    </div>
+
     </div>
 </template>
 
 <script>
-import { listSessions, createSession, deleteSession, deleteAllSessions, renameSession } from '../api'
+import { listSessions, createSession, deleteSession, deleteAllSessions, renameSession, deleteCurrentUserAccount } from '../api'
+import { useAuthStore } from '../stores/auth'
 export default {
   name: 'SessionList',
   props: { current: String },
   data(){ return { sessions: [], loading:false } },
-  emits: ['select','refresh','created'],
+  emits: ['select','refresh','created', 'deletedAll', 'logout'],
   methods:{
     async fetch(){
       this.loading = true
@@ -145,6 +155,54 @@ export default {
         }
         alert(errorMessage); // Hiển thị lỗi đã được xử lý
       }
+    },
+    confirmDeleteAccount() {
+      // Hiển thị cảnh báo mạnh mẽ
+      const confirmation = prompt(
+        "!!! CẢNH BÁO XÓA TÀI KHOẢN !!!\n" +
+        "Hành động này sẽ xóa vĩnh viễn tài khoản của bạn và TOÀN BỘ lịch sử trò chuyện.\n" +
+        "Không thể hoàn tác.\n\n" +
+        "Nhập 'DELETE' vào ô bên dưới để xác nhận:"
+      );
+
+      if (confirmation && confirmation.trim().toUpperCase() === 'DELETE') {
+        this.deleteAccount();
+      } else if (confirmation !== null){
+        alert("Xác nhận không hợp lệ. Hủy bỏ xóa tài khoản.");
+      } else {
+        console.log("Xóa tài khoản đã bị hủy.");
+      }
+    },
+    deleteAccount: async function () {
+      const authStore = useAuthStore(); // Lấy auth store
+      let success = false;
+      try {
+        const result = await deleteCurrentUserAccount();
+        alert(`Delete account result: ${result}`);
+
+        if (result && result.status === "deleted") {
+          alert("Tài khoản và dữ liệu của bạn đã được xóa thành công.");
+          success = true; // Đánh dấu là đã xóa thành công
+        } else {
+          // Nếu API không trả về status mong đợi
+          throw new Error("API không xác nhận xóa thành công.");
+        }
+      } catch (e) {
+        console.error('Error deleting account:', e);
+        // Xử lý và hiển thị lỗi như cũ
+        let errorMessage = 'Không thể xóa tài khoản.';
+        if (e.response && e.response.data && e.response.data.detail) {
+          errorMessage = e.response.data.detail;
+        } else if (e.message) {
+          errorMessage = e.message;
+        }
+        alert(errorMessage);
+        success = false; // Đánh dấu là thất bại
+      } finally {
+        if (success) {
+          authStore.logout();
+        }
+      }
     }
   },
   mounted(){ this.fetch() }
@@ -179,6 +237,19 @@ export default {
 .session-item {
   flex-grow: 1; /* Session item chiếm phần lớn không gian */
   /* Bỏ margin-bottom ở đây vì đã có ở wrapper */
+}
+
+.session-item strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Thêm hoặc sửa dòng font-size này */
+  font-size: 0.85rem; /* Ví dụ: giảm xuống còn 0.85rem (khoảng 13.6px nếu font gốc là 16px) */
+  /* Hoặc dùng pixel: font-size: 13px; */
+  /* Hoặc dùng %: font-size: 85%; */
+  font-weight: 500; /* Giữ nguyên độ đậm */
+  color: var(--text-primary); /* Đảm bảo màu chữ rõ */
 }
 
 .btn-delete {
@@ -247,5 +318,73 @@ export default {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Phần Tip */
+.sidebar-tip {
+  padding: 10px 16px;
+  font-size: 0.75rem; /* Nhỏ hơn */
+  color: var(--text-secondary);
+  text-align: center;
+  border-top: 1px solid var(--border-color); /* Thêm đường kẻ trên */
+  margin-top: auto; /* Đẩy tip và footer xuống dưới nếu list ngắn */
+  flex-shrink: 0; /* Không co lại */
+}
+
+/* Phần Chân Sidebar (chứa nút Logout) */
+.sidebar-footer {
+  padding: 12px 16px; /* Padding xung quanh nút */
+  border-top: 1px solid var(--border-color); /* Đường kẻ trên */
+  flex-shrink: 0; /* Không co lại */
+}
+
+/* Nút Logout mới ở dưới */
+.logout-btn-bottom {
+  width: 100%; /* Chiếm toàn bộ chiều rộng */
+  display: flex; /* Để căn giữa icon/text */
+  align-items: center;
+  justify-content: center;
+  gap: 8px; /* Khoảng cách giữa icon và text */
+  padding: 10px 12px; /* Padding bên trong nút */
+  font-size: 0.9rem;
+  color: #fca5a5; /* Màu đỏ nhạt */
+  border-color: rgba(239, 68, 68, 0.3); /* Viền đỏ mờ */
+}
+
+.logout-btn-bottom:hover {
+  background-color: rgba(239, 68, 68, 0.1); /* Nền đỏ rất nhạt khi hover */
+  border-color: rgba(239, 68, 68, 0.6); /* Viền đỏ rõ hơn */
+  color: #ef4444; /* Màu đỏ rõ hơn */
+}
+
+/* Ghi đè lại style mặc định của .btn.ghost nếu cần */
+.logout-btn-bottom.btn.ghost {
+    background: transparent; /* Đảm bảo nền trong suốt ban đầu */
+    box-shadow: none;
+}
+
+/* Style cho nút Xóa Tài khoản */
+.delete-account-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem; /* Nhỏ hơn nút logout */
+  color: #fca5a5; /* Màu đỏ nhạt */
+  border-color: rgba(239, 68, 68, 0.3);
+  margin-top: 8px; /* Khoảng cách với nút logout */
+}
+
+.delete-account-btn:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #ef4444; /* Màu đỏ rõ hơn */
+}
+/* Ghi đè lại style mặc định của .btn.ghost nếu cần */
+.delete-account-btn.btn.ghost {
+    background: transparent;
+    box-shadow: none;
 }
 </style>

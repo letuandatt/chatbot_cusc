@@ -49,6 +49,7 @@
 import MessageBubble from './MessageBubble.vue'
 import { viewSession } from '../api'
 import { v4 as uuidv4 } from 'uuid'
+import { useAuthStore } from "../stores/auth.js";
 
 export default {
   name: 'ChatWindow',
@@ -158,8 +159,20 @@ export default {
       this.sending = true
       this.isStreaming = true
       this.streamText = ''
+
+      const authStore = useAuthStore();
+      const token = authStore.token;
+      if (!token) {
+        this.messages.push({ role: 'assistant', content: 'Lỗi: Bạn chưa đăng nhập hoặc phiên đăng nhập đã hết hạn.' });
+        this.sending = false;
+        this.isStreaming = false;
+        this.scrollToBottom();
+        authStore.logout(); // Tùy chọn: Tự động logout nếu không có token
+        return;
+      }
+
       try{
-        const BASE = 'http://localhost:8000'
+        const BASE = '/api'
         const url = `${BASE}/chat/text`
         const form = new FormData()
         form.append('question', question)
@@ -168,6 +181,9 @@ export default {
         const resp = await fetch(url, {
           method: 'POST',
           body: form,
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         })
         if(!resp.ok){
           const txt = await resp.text()
@@ -185,7 +201,7 @@ export default {
             const chunk = decoder.decode(value)
             full += chunk
             this.streamText = full
-            this.$nextTick(()=> this.scrollToBottom())
+            await this.$nextTick(()=> this.scrollToBottom())
           }
         }
 
@@ -204,6 +220,7 @@ export default {
       }finally {
         this.sending = false;
         this.isStreaming = false;
+        await this.$nextTick(()=> this.scrollToBottom())
       }
     },
 
@@ -214,18 +231,40 @@ export default {
       this.sending = true
       this.isStreaming = true
       this.streamText = ''
+
+      const authStore = useAuthStore();
+      const token = authStore.token;
+      if (!token) {
+        this.messages.push({ role: 'assistant', content: 'Lỗi: Bạn chưa đăng nhập hoặc phiên đăng nhập đã hết hạn.' });
+        this.sending = false;
+        this.isStreaming = false;
+        this.scrollToBottom();
+        authStore.logout();
+        return;
+      }
+
       try{
-        const BASE = 'http://localhost:8000'
+        const BASE = '/api'
         const url = `${BASE}/chat/image`
         const form = new FormData()
         form.append('question', question)
         form.append('file', file, file.name)
         form.append('session_id', this.sessionId)
 
-        const resp = await fetch(url, { method:'POST', body: form })
+        const resp = await fetch(url, {
+          method:'POST',
+          body: form,
+          headers: {
+              'Authorization': `Bearer ${token}`
+            }
+        })
         if(!resp.ok){
-          const txt = await resp.text()
-          throw new Error(txt || 'Request failed')
+          const txt = await resp.text();
+          if (resp.status === 401) {
+             throw new Error("Xác thực thất bại. Vui lòng đăng nhập lại.");
+             authStore.logout();
+          }
+          throw new Error(txt || `Request failed with status ${resp.status}`);
         }
 
         const reader = resp.body.getReader()
@@ -239,7 +278,7 @@ export default {
             const chunk = decoder.decode(value)
             full += chunk
             this.streamText = full
-            this.$nextTick(()=> this.scrollToBottom())
+            await this.$nextTick(()=> this.scrollToBottom())
           }
         }
         this.messages.push({ role:'assistant', content: full })
@@ -256,6 +295,7 @@ export default {
       }finally {
         this.sending = false;
         this.isStreaming = false;
+        await this.$nextTick(() => this.scrollToBottom());
       }
     },
 
