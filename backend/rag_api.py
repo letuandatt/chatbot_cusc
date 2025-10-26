@@ -76,6 +76,14 @@ class UserInDB(BaseModel):
     hashed_password: str
     created_at: datetime
 
+class UserProfile(BaseModel):
+    name: str
+    email: EmailStr
+    created_at: datetime
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: constr(min_length=8, max_length=64)
 
 # --- Rename Session Request Model ---
 class RenameSessionRequest(BaseModel):
@@ -401,6 +409,72 @@ async def delete_current_user(current_user_id: str = Depends(get_current_user_id
     except Exception as ex:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error deleting user account: {ex}")
+
+
+# --- Xem thong tin User ---
+@app.get("/user/me", response_model=UserProfile)
+async def read_users_me(current_user_id: str = Depends(get_current_user_id)):
+    """
+    Get information about the current user.
+    """
+    users_coll = get_mongo_collection("users")
+    if users_coll is None:
+        raise HTTPException(status_code=503, detail="Failed to connect to MongoDB")
+
+    try:
+        user_doc = users_coll.find_one({"_id": ObjectId(current_user_id)})
+        if user_doc is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return UserProfile(
+            name="",
+            email=user_doc["email"],
+            created_at=user_doc["created_at"]
+        )
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"Error reading user account: {ex}")
+
+# --- Change password ---
+@app.put("/user/me/password", status_code=status.HTTP_200_OK)
+async def change_current_user_password(
+    request: ChangePasswordRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Xác thực mật khẩu hiện tại và cập nhật mật khẩu mới cho người dùng."""
+    users_coll = get_mongo_collection("users")
+    if users_coll is None:
+        raise HTTPException(status_code=503, detail="User database not connected")
+
+    try:
+        # 1. Lấy thông tin user hiện tại
+        user_doc = users_coll.find_one({"_id": ObjectId(current_user_id)})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # 2. Xác thực mật khẩu hiện tại
+        if not verify_password(request.current_password, user_doc["hashed_password"]):
+            raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng")
+
+        # 3. Băm mật khẩu mới
+        new_hashed_password = get_password_hash(request.new_password)
+
+        # 4. Cập nhật mật khẩu mới vào DB
+        result = users_coll.update_one(
+            {"_id": ObjectId(current_user_id)},
+            {"$set": {"hashed_password": new_hashed_password}}
+        )
+
+        if result.modified_count == 1:
+            print(f"DEBUG: Password updated successfully for user {current_user_id}")
+            return {"message": "Mật khẩu đã được cập nhật thành công."}
+        else:
+            # Trường hợp hiếm gặp: không cập nhật được dù đã tìm thấy user
+            raise HTTPException(status_code=500, detail="Không thể cập nhật mật khẩu.")
+
+    except HTTPException as http_ex:
+        raise http_ex # Ném lại lỗi HTTP để FastAPI xử lý
+    except Exception as e:
+        print(f"Lỗi khi đổi mật khẩu user {current_user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Lỗi máy chủ khi đổi mật khẩu.")
 
 
 # --- Root ---

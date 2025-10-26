@@ -75,6 +75,13 @@ export const renameSession = (sessionId, newName) => {
   return api.put(`/session/${sessionId}/rename`, { new_name: newName }).then(r => r.data);
 }
 export const deleteCurrentUserAccount = () => api.delete('/user/me').then(r => r.data)
+export const changeUserPassword = (currentPassword, newPassword) => {
+  // Axios interceptor sẽ tự thêm token
+  return api.put('/user/me/password', {
+    current_password: currentPassword,
+    new_password: newPassword
+  }).then(r => r.data);
+}
 
 // Lưu ý: Các hàm gọi chat (streamChatText, streamChatImage)
 // nên được chuyển từ ChatWindow.vue sang đây để tái sử dụng
