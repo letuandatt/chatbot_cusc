@@ -94,7 +94,7 @@ export default {
         const res = await deleteAllSessions();
         console.log(`Deleted ${res.count} sessions.`);
         localStorage.removeItem('current_session');
-        this.$emit('deletedAll'); // Báo cho App.vue biết tất cả đã bị xóa
+        this.$emit('select', null); // Báo cho App.vue biết tất cả đã bị xóa
         await this.fetch(); // Tải lại danh sách (sẽ rỗng)
       } catch (e) {
         console.error('Error deleting all sessions:', e);
