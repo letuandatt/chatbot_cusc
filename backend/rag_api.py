@@ -21,7 +21,6 @@ from chatbot.auth_utils import (
     TokenData
 )
 
-
 # --- 1. IMPORT CÁC THÀNH PHẦN ĐÃ KHỞI TẠO TỪ query_rag.py ---
 # Import các hàm tiện ích và các chain đã được tạo sẵn
 
@@ -40,6 +39,7 @@ try:
         VISION_LLM,
         FS
     )
+
     print(f"RAG pipeline components initialized successfully.")
 except Exception as e:
     print(f"Failed to initialize RAG pipeline: {e}")
@@ -50,7 +50,6 @@ except Exception as e:
     VISION_LLM = None
     message_history_store = None
     FS = None
-
 
 # --- ĐỊNH NGHĨA MÚI GIỜ VIỆT NAM ---
 try:
@@ -74,24 +73,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # --- User model (for validation) ---
 class UserCreate(BaseModel):
     email: EmailStr
     password: constr(min_length=8, max_length=64)
+
 
 class UserInDB(BaseModel):
     email: EmailStr
     hashed_password: str
     created_at: datetime
 
+
 class UserProfile(BaseModel):
     name: str
     email: EmailStr
     created_at: datetime
 
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: constr(min_length=8, max_length=64)
+
 
 # --- Rename Session Request Model ---
 class RenameSessionRequest(BaseModel):
@@ -129,6 +133,7 @@ def health_check():
         "timestamp": datetime.now(VN_TZ).isoformat()
     }
 
+
 # --- Authentication Endpoints ---
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(user: UserCreate):
@@ -155,14 +160,14 @@ def register_user(user: UserCreate):
         raise HTTPException(status_code=500, detail=f"Failed to register user: {str(ex)}")
 
 
-@app.post("/token") # Standard OAuth2 endpoint name
+@app.post("/token")  # Standard OAuth2 endpoint name
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     """Logs in user and returns JWT token."""
     users_coll = get_mongo_collection("users")
     if users_coll is None:
         raise HTTPException(status_code=503, detail="User database not connected")
 
-    user_doc = users_coll.find_one({"email": form_data.username}) # form uses 'username' for email
+    user_doc = users_coll.find_one({"email": form_data.username})  # form uses 'username' for email
     if not user_doc or not verify_password(form_data.password, user_doc["hashed_password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -170,8 +175,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id = str(user_doc["_id"]) # Get MongoDB ObjectId as string
-    access_token = create_access_token(data={"sub": user_id}) # Store user_id in 'sub' claim
+    user_id = str(user_doc["_id"])  # Get MongoDB ObjectId as string
+    access_token = create_access_token(data={"sub": user_id})  # Store user_id in 'sub' claim
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -231,6 +236,7 @@ def rename_session(session_id: str, request: RenameSessionRequest, current_user_
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"Error renaming session {session_id}: {str(ex)}")
 
+
 # --- List sessions ---
 @app.get("/sessions")
 def get_sessions(current_user_id: str = Depends(get_current_user_id)):
@@ -276,6 +282,7 @@ def delete_session(session_id: str, current_user_id: str = Depends(get_current_u
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"Error deleting session {session_id}: {str(ex)}")
 
+
 @app.delete("/sessions/all")
 def delete_all_user_sessions(current_user_id: str = Depends(get_current_user_id)):
     """Xóa TẤT CẢ các session CỦA USER HIỆN TẠI khỏi MongoDB."""
@@ -283,15 +290,17 @@ def delete_all_user_sessions(current_user_id: str = Depends(get_current_user_id)
     if coll is None:
         raise HTTPException(status_code=503, detail="Database not connected")
     try:
-        result = coll.delete_many({"user_id": current_user_id}) # Xóa tất cả document
+        result = coll.delete_many({"user_id": current_user_id})  # Xóa tất cả document
         print(f"User {current_user_id} deleted {result.deleted_count} sessions.")
         return {"status": "deleted_user_sessions", "count": result.deleted_count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
+
 # --- Chat: text-only query ---
 @app.post("/chat/text")
-async def chat_text(question: str = Form(...), session_id: str = Form(...), current_user_id: str = Depends(get_current_user_id)):
+async def chat_text(question: str = Form(...), session_id: str = Form(...),
+                    current_user_id: str = Depends(get_current_user_id)):
     """Endpoint chính để chat bằng văn bản, trả về stream."""
     if not question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
@@ -330,11 +339,11 @@ async def chat_text(question: str = Form(...), session_id: str = Form(...), curr
 # --- Chat: text + image (multimodal) ---
 @app.post("/chat/image")
 async def chat_with_image(
-    background_tasks: BackgroundTasks,
-    question: str = Form(...),
-    file: UploadFile = File(...),
-    session_id: str = Form(...),
-    current_user_id: str = Depends(get_current_user_id)
+        background_tasks: BackgroundTasks,
+        question: str = Form(...),
+        file: UploadFile = File(...),
+        session_id: str = Form(...),
+        current_user_id: str = Depends(get_current_user_id)
 ):
     """Endpoint chính để chat có ảnh, trả về stream."""
     if not question.strip():
@@ -392,6 +401,7 @@ async def chat_with_image(
 
     return StreamingResponse(stream_response(), media_type="text/plain; charset=utf-8")
 
+
 # --- Delete user ---
 @app.delete("/user/me", status_code=status.HTTP_200_OK)
 async def delete_current_user(current_user_id: str = Depends(get_current_user_id)):
@@ -399,10 +409,10 @@ async def delete_current_user(current_user_id: str = Depends(get_current_user_id
     users_coll = get_mongo_collection("users")
     sessions_coll = get_mongo_collection("sessions")
     fs_client = FS
-    
+
     if users_coll is None or sessions_coll is None or fs_client is None:
         raise HTTPException(status_code=503, detail="Database not connected")
-    
+
     try:
         user_delete_result = users_coll.delete_one({"_id": ObjectId(current_user_id)})
         if user_delete_result.deleted_count == 0:
@@ -413,7 +423,8 @@ async def delete_current_user(current_user_id: str = Depends(get_current_user_id
         session_delete_result = sessions_coll.delete_many({"user_id": current_user_id})
         print(f"DEBUG: Deleted {session_delete_result.deleted_count} sessions for user_id: {current_user_id}")
 
-        return {"status": "deleted", "user_id": current_user_id, "sessions_deleted": session_delete_result.deleted_count}
+        return {"status": "deleted", "user_id": current_user_id,
+                "sessions_deleted": session_delete_result.deleted_count}
     except Exception as ex:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error deleting user account: {ex}")
@@ -441,11 +452,12 @@ async def read_users_me(current_user_id: str = Depends(get_current_user_id)):
     except Exception as ex:
         raise HTTPException(status_code=500, detail=f"Error reading user account: {ex}")
 
+
 # --- Change password ---
 @app.put("/user/me/password", status_code=status.HTTP_200_OK)
 async def change_current_user_password(
-    request: ChangePasswordRequest,
-    current_user_id: str = Depends(get_current_user_id)
+        request: ChangePasswordRequest,
+        current_user_id: str = Depends(get_current_user_id)
 ):
     """Xác thực mật khẩu hiện tại và cập nhật mật khẩu mới cho người dùng."""
     users_coll = get_mongo_collection("users")
@@ -479,7 +491,7 @@ async def change_current_user_password(
             raise HTTPException(status_code=500, detail="Không thể cập nhật mật khẩu.")
 
     except HTTPException as http_ex:
-        raise http_ex # Ném lại lỗi HTTP để FastAPI xử lý
+        raise http_ex  # Ném lại lỗi HTTP để FastAPI xử lý
     except Exception as e:
         print(f"Lỗi khi đổi mật khẩu user {current_user_id}: {e}")
         raise HTTPException(status_code=500, detail="Lỗi máy chủ khi đổi mật khẩu.")
