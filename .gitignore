@@ -15,3 +15,4 @@ chatbot/test.py
 chatbot/test_evaluate.py
 backend/test_rag_api.py
 node_modules
+chatbot/test_dir
