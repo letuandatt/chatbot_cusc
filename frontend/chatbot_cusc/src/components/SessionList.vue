@@ -2,15 +2,17 @@
   <div class="sessions">
     <div class="sidebar-header">
       <div class="btn-group">
-        <button class="btn" @click="createNew" title="Create New Session">+ New</button>
-        <button class="btn ghost danger" @click="confirmDeleteAll" title="Delete All Sessions">🗑️ Delete All</button>
-        <button class="btn ghost" @click="$emit('refresh')" title="Refresh List" style="margin-left: auto;">🔄</button>
+        <button class="btn" @click="createNew" title="Tạo mới">+ Tạo mới</button>
+        <button class="btn ghost danger" @click="confirmDeleteAll" title="Xóa tất cả">🗑️ Xóa tất cả</button>
+        <button class="btn ghost" @click="$emit('refresh')" title="Tải lại" style="margin-left: auto;">🔄</button>
       </div>
     </div>
 
     <div class="session-list-items">
-      <div v-if="loading" class="loading-text">Loading sessions...</div>
-      <div v-else-if="!sessions || sessions.length === 0" class="no-sessions">No sessions found. Create one!</div>
+      <div v-if="loading" class="loading-text">Đang tải các phiên ...</div>
+      <div v-else-if="!sessions || sessions.length === 0" class="no-sessions">
+        <div style="margin-bottom: 10px">Không có phiên làm việc nào.</div>
+        <div>Hãy tạo một phiên làm việc để chat</div></div>
       <div v-else>
         <div v-for="s in sessions" :key="s.session_id" class="session-item-wrapper">
 

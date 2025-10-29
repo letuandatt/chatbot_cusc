@@ -1,7 +1,10 @@
 <template>
   <div class="profile-view">
     <div class="profile-card">
-      <img src="../assets/20181031cusc.png" alt="Logo" class="profile-logo">
+      <div class="profile-actions">
+        <router-link to="/" class="btn ghost">Quay lại</router-link>
+      </div>
+      <img alt="Logo" class="profile-logo" src="../assets/20181031cusc.png">
       <h1>Thông tin tài khoản</h1>
 
       <div v-if="loading" class="loading-indicator">Đang tải...</div>
@@ -10,7 +13,10 @@
       <div v-if="userProfile" class="profile-details">
         <p>
           <strong>Tên:</strong>
-          <span>{{ userProfile.name || 'Chưa cập nhật' }}</span>
+          <span>
+            {{ userProfile.name || 'Chưa cập nhật' }}
+            <button name="Cập nhật tên" class="btn-edit" @click="promptRename">✏️</button>
+          </span>
         </p>
         <p>
           <strong>Email:</strong>
@@ -49,59 +55,65 @@
 
       <p class="placeholder-text">(Chức năng đổi tên sẽ được thêm vào sau)</p>
 
-      <div class="profile-actions">
-        <router-link to="/" class="btn ghost">Quay lại Chat</router-link>
-      </div>
+
     </div>
   </div>
 </template>
 
-<script setup>
+<script>
 import { ref, onMounted, reactive } from 'vue';
 import { useAuthStore } from '../stores/auth';
-import { api, changeUserPassword } from '../api'; // Import instance axios đã cấu hình
-import router from '../router';
+import { api, changeUserPassword, changUserName } from '../api';
 
-const authStore = useAuthStore();
-const userProfile = ref(null);
-const loading = ref(false);
-const error = ref(null);
+export default {
+  name: 'UserProfile',
 
-const currentPassword = ref('');
-const newPassword = ref('');
-const confirmNewPassword = ref('');
+  setup() {
+    const authStore = useAuthStore();
+    const userProfile = ref(null);
+    const loading = ref(false);
+    const error = ref(null);
 
-const changePasswordStatus = reactive({
-  loading: false,
-  error: null,
-  success: null,
-});
+    const currentPassword = ref('');
+    const newPassword = ref('');
+    const confirmNewPassword = ref('');
 
-// Hàm gọi API lấy thông tin user
-const fetchUserProfile = async () => {
-  loading.value = true;
-  error.value = null;
-  try {
-    // Gọi API /user/me (axios interceptor sẽ tự thêm token)
-    const response = await api.get('/user/me');
-    userProfile.value = response.data;
-  } catch (err) {
-    console.error("Error fetching user profile:", err);
-    error.value = err.response?.data?.detail || err.message || "Không thể tải thông tin tài khoản.";
-    // Nếu lỗi 401, interceptor sẽ tự logout
-  } finally {
-    loading.value = false;
-  }
-};
+    const newName = ref('');
+    const changeNameStatus = reactive({
+      loading: false,
+      error: null,
+      success: null,
+    });
 
-// Gọi API khi component được tạo
-onMounted(() => {
-  fetchUserProfile();
-});
+    const changePasswordStatus = reactive({
+      loading: false,
+      error: null,
+      success: null,
+    });
 
-// Hàm format ngày tháng (tương tự SessionList)
-const formatDate = (isoString) => {
-   if (!isoString) return 'N/A';
+    // Lấy thông tin user
+    const fetchUserProfile = async () => {
+      loading.value = true;
+      error.value = null;
+      try {
+        const response = await api.get('/user/me');
+        userProfile.value = response.data;
+      } catch (err) {
+        console.error("Error fetching user profile:", err);
+        error.value = err.response?.data?.detail || err.message || "Không thể tải thông tin tài khoản.";
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    // Gọi khi mount
+    onMounted(() => {
+      fetchUserProfile();
+    });
+
+    // Format ngày
+    const formatDate = (isoString) => {
+      if (!isoString) return 'N/A';
       try {
         const date = new Date(isoString);
         return date.toLocaleString('vi-VN', {
@@ -112,53 +124,132 @@ const formatDate = (isoString) => {
           minute: '2-digit'
         });
       } catch {
-        return isoString; // Trả về chuỗi gốc nếu không parse được
+        return isoString;
       }
-};
+    };
 
-const handleChangePassword = async () => {
-  // Reset trạng thái
-  changePasswordStatus.loading = true;
-  changePasswordStatus.error = null;
-  changePasswordStatus.success = null;
+    // Đổi mật khẩu
+    const handleChangePassword = async () => {
+      changePasswordStatus.loading = true;
+      changePasswordStatus.error = null;
+      changePasswordStatus.success = null;
 
-  // 1. Kiểm tra mật khẩu mới khớp nhau
-  if (newPassword.value !== confirmNewPassword.value) {
-    changePasswordStatus.error = "Mật khẩu mới và xác nhận không khớp.";
-    changePasswordStatus.loading = false;
-    return;
-  }
+      if (newPassword.value !== confirmNewPassword.value) {
+        changePasswordStatus.error = "Mật khẩu mới và xác nhận không khớp.";
+        changePasswordStatus.loading = false;
+        return;
+      }
 
-  // 2. Kiểm tra độ dài mật khẩu mới (Pydantic backend cũng kiểm tra)
-  if (newPassword.value.length < 8) {
-     changePasswordStatus.error = "Mật khẩu mới phải có ít nhất 8 ký tự.";
-     changePasswordStatus.loading = false;
-     return;
-  }
+      if (newPassword.value.length < 8) {
+        changePasswordStatus.error = "Mật khẩu mới phải có ít nhất 8 ký tự.";
+        changePasswordStatus.loading = false;
+        return;
+      }
 
-  try {
-    // 3. Gọi API đổi mật khẩu
-    const result = await changeUserPassword(currentPassword.value, newPassword.value);
+      try {
+        const result = await changeUserPassword(currentPassword.value, newPassword.value);
+        changePasswordStatus.success = result.message || "Đổi mật khẩu thành công!";
+        currentPassword.value = '';
+        newPassword.value = '';
+        confirmNewPassword.value = '';
+      } catch (err) {
+        console.error("Error changing password:", err);
+        changePasswordStatus.error = err.response?.data?.detail || err.message || "Đổi mật khẩu thất bại.";
+      } finally {
+        changePasswordStatus.loading = false;
+      }
+    };
 
-    // 4. Hiển thị thành công và xóa form
-    changePasswordStatus.success = result.message || "Đổi mật khẩu thành công!";
-    currentPassword.value = '';
-    newPassword.value = '';
-    confirmNewPassword.value = '';
+    const promptRename = () => {
+      if (!userProfile.value) return;
 
-  } catch (err) {
-    // 5. Hiển thị lỗi
-    console.error("Error changing password:", err);
-    changePasswordStatus.error = err.response?.data?.detail || err.message || "Đổi mật khẩu thất bại.";
-  } finally {
-    // 6. Hoàn tất loading
-    changePasswordStatus.loading = false;
-  }
-};
+      // Xóa thông báo cũ
+      changeNameStatus.error = null;
+      changeNameStatus.success = null;
 
-// Hàm đăng xuất
-const logout = () => {
-  authStore.logout();
+      const currentName = userProfile.value.name || '';
+      const newNameInput = prompt("Nhập tên mới của bạn:", currentName);
+
+      if (newNameInput === null) {
+        // User nhấn "Cancel"
+        return;
+      }
+
+      const trimmedNewName = newNameInput.trim();
+
+      if (!trimmedNewName) {
+        changeNameStatus.error = "Tên không được để trống.";
+        return;
+      }
+
+      if (trimmedNewName === currentName) {
+        changeNameStatus.error = "Tên mới phải khác tên hiện tại.";
+        return;
+      }
+
+      // Gán tên mới và gọi hàm xử lý
+      newName.value = trimmedNewName;
+      handleChangeName();
+    };
+
+    const handleChangeName = async () => {
+      // Sửa: Dùng `changeNameStatus` (đã được định nghĩa)
+      changeNameStatus.loading = true;
+      changeNameStatus.error = null;
+      changeNameStatus.success = null;
+
+      if (!newName.value.trim()) {
+        changeNameStatus.error = "Tên mới không được để trống.";
+        changeNameStatus.loading = false;
+        return;
+      }
+
+      // Sửa: Lấy tên hiện tại từ userProfile đã fetch
+      const currentName = userProfile.value.name || '';
+
+      try {
+        const result = await changUserName(currentName, newName.value);
+        changeNameStatus.success = result.message || "Cập nhật tên thành công!";
+
+        // Cập nhật lại local store
+        if (authStore.user) {
+          authStore.user.name = newName.value;
+        }
+        // Cập nhật UI ngay lập tức
+        if (userProfile.value) {
+            userProfile.value.name = newName.value;
+        }
+
+        newName.value = ''; // Xóa tên mới sau khi thành công
+      } catch (err) {
+        changeNameStatus.error = err.response?.data?.detail || "Lỗi khi đổi tên người dùng.";
+      } finally {
+        changeNameStatus.loading = false;
+      }
+    };
+
+    // Đăng xuất
+    const logout = () => {
+      authStore.logout();
+    };
+
+    // Trả ra biến và hàm cho template
+    return {
+      authStore,
+      userProfile,
+      loading,
+      error,
+      currentPassword,
+      newPassword,
+      confirmNewPassword,
+      changePasswordStatus,
+      fetchUserProfile,
+      handleChangePassword,
+      promptRename,
+      formatDate,
+      logout,
+    };
+  },
 };
 </script>
 
@@ -313,13 +404,34 @@ const logout = () => {
 
 /* Nút actions cuối trang */
 .profile-actions {
-  margin-top: 30px; /* Khoảng cách với placeholder */
+  margin-top: 5px; /* Khoảng cách với placeholder */
   display: flex;
-  justify-content: center; /* Căn giữa nút */
   gap: 15px;
+  margin-bottom: 30px;
 }
 .profile-actions .btn { /* Áp dụng chung cho các nút/link ở đây */
     font-size: 0.9rem;
     padding: 8px 18px; /* Padding nút */
+}
+
+.btn-edit {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.9rem; /* Cỡ icon */
+  padding: 8px;
+  margin-left: auto; /* Đẩy nút sửa và xóa về cuối */
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+}
+.btn-edit:hover {
+  opacity: 1;
+  color: var(--bg-accent); /* Màu xanh khi hover */
+}
+
+.name-status {
+  margin-top: 15px;
+  margin-bottom: 0;
 }
 </style>

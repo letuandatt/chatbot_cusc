@@ -33,7 +33,7 @@
       </div>
 
       <div class="input-area">
-         <label for="file-input" class="file-label">Attach</label>
+         <label for="file-input" class="file-label"></label>
         <input id="file-input" type="file" ref="fileInput" @change="onFile" :disabled="!sessionId || sending"/>
         <span v-if="fileName" class="file-name">{{ fileName }}</span>
 

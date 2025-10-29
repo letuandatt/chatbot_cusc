@@ -82,6 +82,12 @@ export const changeUserPassword = (currentPassword, newPassword) => {
     new_password: newPassword
   }).then(r => r.data);
 }
+export const changUserName = (currentName, newName) => {
+    return api.put('/user/me/name', {
+        current_name: currentName,
+        new_name: newName
+    }).then(r => r.data);
+}
 
 // Lưu ý: Các hàm gọi chat (streamChatText, streamChatImage)
 // nên được chuyển từ ChatWindow.vue sang đây để tái sử dụng

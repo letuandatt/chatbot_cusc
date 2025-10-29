@@ -8,23 +8,13 @@
           <label for="email">Email:</label>
           <input type="email" id="email" v-model="email" required autocomplete="email">
         </div>
-        <div class="form-group">
-          <label for="password">Mật khẩu:</label>
-          <input type="password" id="password" v-model="password" required autocomplete="current-password">
-        </div>
         <div v-if="authStore.error" class="error-message">
           {{ authStore.error }}
         </div>
         <button type="submit" class="btn auth-btn" :disabled="authStore.loading">
-          {{ authStore.loading ? 'Đang xử lý...' : 'Đăng nhập' }}
+          {{ authStore.loading ? 'Đang xử lý...' : 'Gửi' }}
         </button>
       </form>
-      <p class="switch-auth">
-        Chưa có tài khoản? <router-link to="/register">Đăng ký ngay</router-link>
-      </p>
-      <p class="forgot-password">
-        Quên mật khẩu? <router-link to="/forgot-password">Quên mật khẩu</router-link>
-      </p>
     </div>
   </div>
 </template>
@@ -38,7 +28,7 @@ const password = ref('')
 const authStore = useAuthStore()
 
 const handleLogin = async () => {
-  await authStore.login(email.value, password.value)
+  // await authStore.login(email.value, password.value)
   // Router guard sẽ tự động chuyển hướng nếu thành công
 }
 </script>

@@ -33,6 +33,12 @@ const routes = [
         component: ProfileView,
         meta: { requiresAuth: true }
     },
+    {
+        path: '/forgot-password',
+        name: "ForgotPassword",
+        component: () => import('../views/ForgetPasswordView.vue'),
+        meta: { requiresGuest: true }
+    },
    // Bắt các route không tồn tại, chuyển về trang Chat (nếu đã đăng nhập) hoặc Login
    { path: '/:pathMatch(.*)*', redirect: to => {
        const authStore = useAuthStore();
