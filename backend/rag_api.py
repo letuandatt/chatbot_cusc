@@ -81,6 +81,7 @@ class UserCreate(BaseModel):
 
 
 class UserInDB(BaseModel):
+    name: str
     email: EmailStr
     hashed_password: str
     created_at: datetime
@@ -95,6 +96,11 @@ class UserProfile(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: constr(min_length=8, max_length=64)
+
+
+class ChageNameRequest(BaseModel):
+    current_name: str
+    new_name: str
 
 
 # --- Rename Session Request Model ---
@@ -149,6 +155,7 @@ def register_user(user: UserCreate):
     hashed_password = get_password_hash(user.password)
     now = datetime.now(VN_TZ).isoformat()
     new_user_data = {
+        "name": user.email.split("@")[0],
         "email": user.email,
         "hashed_password": hashed_password,
         "created_at": now
@@ -445,7 +452,7 @@ async def read_users_me(current_user_id: str = Depends(get_current_user_id)):
         if user_doc is None:
             raise HTTPException(status_code=404, detail="User not found")
         return UserProfile(
-            name="",
+            name=user_doc["name"],
             email=user_doc["email"],
             created_at=user_doc["created_at"]
         )
@@ -496,6 +503,40 @@ async def change_current_user_password(
         print(f"Lỗi khi đổi mật khẩu user {current_user_id}: {e}")
         raise HTTPException(status_code=500, detail="Lỗi máy chủ khi đổi mật khẩu.")
 
+
+@app.put("/user/me/name", status_code=status.HTTP_200_OK)
+async def change_current_user_name(
+        request: ChageNameRequest,
+        current_user_id: str = Depends(get_current_user_id)
+):
+    users_coll = get_mongo_collection("users")
+    if users_coll is None:
+        raise HTTPException(status_code=503, detail="User database not connected")
+
+    try:
+        user_doc = users_coll.find_one({"_id": ObjectId(current_user_id)})
+        if not user_doc:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        result = users_coll.update_one(
+            {"_id": ObjectId(current_user_id)},
+            {"$set": {"name": request.new_name}}
+        )
+
+        if result.modified_count == 1:
+            # Nếu sửa thành công 1 dòng -> Trả về OK
+            return {"message": "Đã cập nhật tên thành công"}
+        elif result.modified_count == 0 and result.matched_count == 1:
+            # Nếu tìm thấy user nhưng tên mới = tên cũ -> Vẫn trả về OK
+            return {"message": "Tên không thay đổi (giống tên cũ)."}
+        else:
+            # Nếu không tìm thấy user (matched_count = 0)
+            raise HTTPException(status_code=404, detail="Không tìm thấy người dùng để cập nhật.")
+    except HTTPException as http_ex:
+        raise http_ex  # Ném lại lỗi HTTP để FastAPI xử lý
+    except Exception as e:
+        print(f"Lỗi khi đổi tên user {current_user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Lỗi máy chủ khi đổi tên user.")
 
 # --- Root ---
 @app.get("/")
