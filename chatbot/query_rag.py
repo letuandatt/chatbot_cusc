@@ -389,7 +389,7 @@ Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục 
 Sử dụng NGỮ CẢNH (tài liệu CUSC) được cung cấp bên dưới để trả lời CÂU HỎI.
 Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
 
-Hãy trả lời bằng tiếng Việt, chi tiết, chính xác.
+Hãy trả lời bằng tiếng Việt một cách tự nhiên, chi tiết, chính xác và định dạng đẹp, dễ đọc.
 - Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
 - Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
 
@@ -543,7 +543,7 @@ VISION_CHAIN_WITH_HISTORY = create_vision_chain(VISION_LLM)
 # SECTION 5: CÁC HÀM XỬ LÝ CLI (COMMAND-LINE INTERFACE)
 # ==============================================================================
 
-def handle_text_query(query_text, session_id="default_session"):
+def handle_text_query(query_text, user_id, session_id="default_session"):
     print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
 
     chain_to_run = RAG_CHAIN_WITH_HISTORY
@@ -553,7 +553,7 @@ def handle_text_query(query_text, session_id="default_session"):
         return
 
     full_response = ""
-    config_ = {"configurable": {"session_id": session_id}}
+    config_ = {"configurable": {"session_id": session_id, "user_id": user_id}}
     input_data = {"question": query_text}
 
     try:
@@ -562,12 +562,12 @@ def handle_text_query(query_text, session_id="default_session"):
             print(chunk, end="", flush=True)
         print("\n")
         # Lưu vào DB sau khi stream xong
-        save_session_message(session_id, query_text, full_response)
+        save_session_message(session_id, user_id, query_text, full_response)
     except Exception as e:
         print(f"\nLỗi khi xử lý câu hỏi text: {e}")
 
 
-def handle_multimodal_query(query_text, image_path, session_id="default_session"):
+def handle_multimodal_query(query_text, image_path, user_id, session_id="default_session"):
     print(f"--- 🖼️ Xử lý câu hỏi có ảnh: {os.path.basename(image_path)} ---")
 
     chain_to_run = VISION_CHAIN_WITH_HISTORY
@@ -578,7 +578,7 @@ def handle_multimodal_query(query_text, image_path, session_id="default_session"
 
     full_response = ""
     input_data = {"question": query_text, "image_path": image_path}
-    config_ = {"configurable": {"session_id": session_id}}
+    config_ = {"configurable": {"session_id": session_id, "user_id": user_id}}
 
     try:
         for chunk in chain_to_run.stream(input_data, config=config_):
@@ -587,7 +587,7 @@ def handle_multimodal_query(query_text, image_path, session_id="default_session"
             print(content, end="", flush=True)
         print("\n")
         # Lưu vào DB sau khi stream xong
-        save_session_message(session_id, query_text, full_response, image_path=image_path)
+        save_session_message(session_id, user_id, query_text, full_response, image_path=image_path)
     except Exception as e:
         print(f"\nLỗi khi xử lý câu hỏi ảnh: {e}")
 
@@ -603,12 +603,13 @@ def main():
     print("[2] Tiếp tục session cũ")
 
     session_id = None
+    user_id = "69023a7b6c98b8abb985500a"
     choice = input("Lựa chọn của bạn (1 hoặc 2): ").strip()
 
     if choice == '2':
         # --- Logic tiếp tục session ---
         print("\nĐang tải các session gần đây...")
-        sessions = list_sessions(limit=10)  # Lấy 10 session gần nhất
+        sessions = list_sessions(limit=10, user_id=user_id)  # Lấy 10 session gần nhất
 
         if not sessions:
             print("Không tìm thấy session nào. Sẽ tạo session mới.")
@@ -638,7 +639,7 @@ def main():
     print("Nhập 'exit' để thoát.\n")
 
     # Tải lịch sử ngay khi bắt đầu (để chat_history không bị rỗng)
-    get_session_history(session_id)
+    get_session_history(session_id, user_id)
 
     while True:
         query_text = input("👤 Bạn hỏi: ")
@@ -649,11 +650,11 @@ def main():
         print("\n💡 Trả lời:")
 
         if image_path and os.path.exists(image_path):
-            handle_multimodal_query(query_text, image_path, session_id)
+            handle_multimodal_query(query_text, image_path, user_id, session_id)
         elif image_path:
             print(f"⚠️ Không tìm thấy ảnh tại '{image_path}'")
         else:
-            handle_text_query(query_text, session_id)
+            handle_text_query(query_text, user_id, session_id)
 
 
 if __name__ == "__main__":
