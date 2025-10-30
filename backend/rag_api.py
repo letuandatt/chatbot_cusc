@@ -1,12 +1,12 @@
 import uuid
 import os
 import traceback
-import tempfile  # Sử dụng thư mục tạm an toàn hơn
+import tempfile
 import shutil
 import pytz
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, status
-from fastapi.responses import StreamingResponse  # <-- Quan trọng cho streaming
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from bson import ObjectId
@@ -17,13 +17,10 @@ from chatbot.auth_utils import (
     verify_password,
     get_password_hash,
     create_access_token,
-    get_current_user_id,
-    TokenData
+    get_current_user_id
 )
 
-# --- 1. IMPORT CÁC THÀNH PHẦN ĐÃ KHỞI TẠO TỪ query_rag.py ---
-# Import các hàm tiện ích và các chain đã được tạo sẵn
-
+# --- 1. IMPORT CÁC THÀNH PHẦN ĐÃ KHỞI TẠO ---
 try:
     from chatbot.query_rag import (
         get_mongo_collection,
@@ -58,6 +55,8 @@ try:
 except pytz.UnknownTimeZoneError:
     print("VN_TZ not found, using UTC as default timezone.")
     VN_TZ = timezone.utc
+
+
 app = FastAPI(
     title="RAG API Service",
     description="FastAPI backend for RAG-based AI assistant",

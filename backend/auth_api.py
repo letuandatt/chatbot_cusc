@@ -1,9 +1,7 @@
-import os
-
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, field_validator
 from passlib.context import CryptContext
-from jose import JWTError, jwt
+from jose import jwt
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 
@@ -15,10 +13,11 @@ SECRET_KEY = config.SECRET_KEY
 ALGORITHM = config.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = config.ACCESS_TOKEN_EXPIRE_MINUTES
 
-# keep bcrypt, but enforce safe handling for its 72-byte limit
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
+# Encrypt password
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# Database
+MONGO_URI = config.MONGO_URI
 client = MongoClient(MONGO_URI)
 db = client["cusc_rag"]
 users = db["users"]
@@ -26,9 +25,9 @@ users = db["users"]
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # --- Constants ---
-# bcrypt processes only first 72 bytes. We'll cap at 64 chars and truncate safely at 72 bytes.
 MAX_PASSWORD_CHARS = 64
 BCRYPT_MAX_BYTES = 72
+MIN_PASSWORD_LENGTH = 8
 
 
 def _truncate_to_bcrypt_bytes(pw: str) -> str:
@@ -53,8 +52,17 @@ class UserRegister(BaseModel):
             raise ValueError("Password is required")
         if len(v) > MAX_PASSWORD_CHARS:
             raise ValueError(f"Password must be at most {MAX_PASSWORD_CHARS} characters")
-        if len(v) < 8:
+        if len(v) < MIN_PASSWORD_LENGTH:
             raise ValueError("Password must be at least 8 characters")
+
+        # if not any(c.isupper() for c in v):
+        #     raise ValueError("Password must contain at least one uppercase letter")
+        # if not any(c.islower() for c in v):
+        #     raise ValueError("Password must contain at least one lowercase letter")
+        # if not any(c.isdigit() for c in v):
+        #     raise ValueError("Password must contain at least one digit")
+        # if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+        #     raise ValueError("Password must contain at least one special character")
         return v
 
 
