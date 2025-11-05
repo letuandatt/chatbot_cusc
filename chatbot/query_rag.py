@@ -5,8 +5,10 @@ import uuid
 import gridfs
 import functools
 import pytz
+import hashlib
 
 from chatbot import config
+from extract_data import fix_first_roman_headings
 
 from datetime import datetime, timezone
 from pymongo import MongoClient, ASCENDING, DESCENDING
@@ -23,6 +25,12 @@ from langchain_core.runnables import RunnableLambda, RunnablePassthrough, Config
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
+
+from llama_parse import LlamaParse
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import MarkdownHeaderTextSplitter
+from langchain_core.documents import Document
+
 
 # ==============================================================================
 # SECTION 1: KHỞI TẠO CÁC THÀNH PHẦN TOÀN CỤC (GLOBAL COMPONENTS)
@@ -55,7 +63,6 @@ except Exception as e:
     DB_COLLECTION = None
     FS = None
 
-
 def get_mongo_collection(collection_name: str = "sessions"):
     """Trả về collection 'sessions' đã được khởi tạo."""
     if _mongo_client is None or _mongo_db is None:
@@ -66,6 +73,19 @@ def get_mongo_collection(collection_name: str = "sessions"):
     except Exception as ex:
         print(f"Lỗi khi lấy collection '{collection_name}': {ex}")
         return None
+
+
+try:
+    DB_DOCUMENTS_COLLECTION = get_mongo_collection("documents")
+    if DB_DOCUMENTS_COLLECTION is not None:
+        DB_DOCUMENTS_COLLECTION.create_index([("session_id", ASCENDING)])
+        DB_DOCUMENTS_COLLECTION.create_index([("user_id", ASCENDING)])
+        DB_DOCUMENTS_COLLECTION.create_index([("created_at", DESCENDING)])
+        print("MongoDB collection 'documents' initialized.")
+except Exception as e:
+    print(f"Failed to initialize 'documents' collection: {e}")
+    DB_DOCUMENTS_COLLECTION = None
+
 
 def check_session_belongs_to_user(session_id: str, user_id: str) -> bool:
     """Kiểm tra session có tồn tại và thuộc về user_id không."""
@@ -92,7 +112,6 @@ try:
         embedding_function=RAG_EMBEDDING_MODEL,
         collection_name=config.COLLECTION_NAME
     )
-
     BASE_RETRIEVER = DB_CHROMA.as_retriever(search_kwargs={"k": config.RAG_RETRIEVER_K})
 
     BASE_COMPRESSOR = CohereRerank(
@@ -110,6 +129,47 @@ try:
 except Exception as e:
     print(f"Failed to initialize RAG pipeline: {e}")
     GLOBAL_RETRIEVER = None
+
+
+# --- FILE RAG COMPONENTS ---
+try:
+    # Khởi tạo Chroma instance cho collection "temp"
+    DB_CHROMA_TEMP = Chroma(
+        persist_directory=config.VECTORSTORE_PATH,
+        embedding_function=RAG_EMBEDDING_MODEL,
+        collection_name=config.TEMP_COLLECTION_NAME  # Sử dụng collection "temp"
+    )
+    print(f"Chroma temp collection '{config.TEMP_COLLECTION_NAME}' loaded.")
+
+    # Compressor riêng cho file RAG (sử dụng config riêng)
+    FILE_COMPRESSOR = CohereRerank(
+        top_n=config.FILE_RAG_RERANKER_TOP_N,
+        model=config.RERANK_MODEL_NAME,
+        cohere_api_key=config.COHERE_API_KEY
+    )
+
+    def get_file_retriever(session_id: str):
+        """
+        Tạo một retriever đã được lọc (filter) theo session_id.
+        """
+        print(f"--- DEBUG: Creating FILE retriever for session: {session_id} ---")
+        # 1. Base retriever (từ collection temp, lọc theo session_id)
+        file_base_retriever = DB_CHROMA_TEMP.as_retriever(
+            search_kwargs={
+                "k": config.FILE_RAG_RETRIEVER_K,
+                "filter": {"session_id": session_id}  # Đây là mấu chốt
+            }
+        )
+        # 2. Bọc retriever này với Reranker
+        return ContextualCompressionRetriever(
+            base_compressor=FILE_COMPRESSOR,
+            base_retriever=file_base_retriever,
+        )
+
+except Exception as e:
+    print(f"Failed to initialize FILE RAG pipeline: {e}")
+    DB_CHROMA_TEMP = None
+    FILE_COMPRESSOR = None
 
 # --- VIETNAM TIMEZONE DEFINITION ---
 try:
@@ -278,6 +338,175 @@ def list_sessions(user_id: str, limit=50):
         print(f"Lỗi khi list sessions: {e}")
         return []
 
+def check_session_has_files(session_id: str) -> bool:
+    """Kiểm tra xem session này đã tải file PDF nào lên chưa."""
+    coll = DB_DOCUMENTS_COLLECTION
+    if coll is None:
+        return False
+    try:
+        return coll.count_documents({"session_id": session_id}, limit=1) > 0
+    except Exception as e:
+        print(f"Lỗi khi kiểm tra file của session: {e}")
+        return False
+
+
+def compute_file_hash(file_path: str) -> str:
+    """Tạo hash MD5 cho file để tránh trùng."""
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    return hashlib.md5(file_data).hexdigest()
+
+def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str) -> str | None:
+    fs_client = FS
+    coll = DB_DOCUMENTS_COLLECTION
+    if fs_client is None or coll is None:
+        print("Lỗi: Không thể lưu file, DB hoặc GridFS chưa kết nối.")
+        return None
+
+    now = datetime.now(VN_TZ).isoformat()
+    file_name = os.path.basename(file_path)
+    file_hash = compute_file_hash(file_path)  # ✅ thêm dòng này
+
+    try:
+        with open(file_path, "rb") as f:
+            file_id = fs_client.put(
+                f,
+                filename=file_name,
+                metadata={
+                    "session_id": session_id,
+                    "user_id": user_id,
+                    "file_hash": file_hash,
+                    "created_at": now
+                }
+            )
+
+        doc_record = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "filename": file_name,
+            "gridfs_id": str(file_id),
+            "file_hash": file_hash,  # ✅ thêm vào đây
+            "created_at": now,
+            "status": "uploaded"
+        }
+        coll.insert_one(doc_record)
+        print(f"Đã lưu file '{file_name}' vào GridFS (ID: {file_id}) và collection 'documents'.")
+        return str(file_id)
+    except Exception as e:
+        print(f"Lỗi khi lưu file PDF vào MongoDB: {e}")
+        return None
+
+
+def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
+    """
+    Sử dụng LlamaParse để phân tích PDF,
+    split (Markdown + Semantic), và lưu vào Chroma (temp collection).
+    (Phiên bản đã sửa lỗi và đồng bộ logic)
+    """
+    if DB_CHROMA_TEMP is None:
+        print("Lỗi: Không thể vector hóa, DB_CHROMA_TEMP chưa sẵn sàng.")
+        return
+
+    print(f"Bắt đầu xử lý và vector hóa file: {os.path.basename(file_path)}")
+
+    # 1. Parse PDF dùng LlamaParse (theo config)
+    loader = LlamaParse(
+        api_key=config.LLAMA_CLOUD_API_KEY,
+        parse_mode="parse_page_with_agent",
+        model=config.LLAMA_PARSE_MODEL,
+        output_tables_as_HTML=True,
+        merge_tables_across_pages_in_markdown=True,
+        compact_markdown_table=True,
+        language="vi",
+        high_res_ocr=True,
+        adaptive_long_table=True,
+        outlined_table_extraction=True,
+        result_type="markdown",
+        specialized_chart_parsing_efficient=True
+    )
+
+    try:
+        # documents là một list các LlamaDocument
+        documents = loader.load_data(file_path)
+    except Exception as e:
+        print(f"Lỗi khi gọi LlamaParse: {e}")
+        DB_DOCUMENTS_COLLECTION.update_one(
+            {"session_id": session_id, "filename": os.path.basename(file_path)},
+            {"$set": {"status": "error_parsing"}}
+        )
+        return
+
+    print(f"LlamaParse hoàn tất, {len(documents)} tài liệu được trích xuất.")
+
+    # 2. Split tài liệu (Tái sử dụng logic từ create_database.py)
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=[("#", "section"), ("##", "subsection"), ("###", "subsubsection")],
+        return_each_line=False,
+        strip_headers=False
+    )
+    semantic_splitter = SemanticChunker(embeddings=RAG_EMBEDDING_MODEL)
+
+    all_chunks = []
+    base_metadata = {
+        "session_id": session_id,
+        "user_id": user_id,
+        "source": os.path.basename(file_path)
+    }
+
+    for doc in documents:  # doc là một LlamaDocument
+
+        # === SỬA LỖI TẠI ĐÂY ===
+        markdown_content = doc.get_content()
+
+        # (Tùy chọn) Áp dụng logic fix tiêu đề La Mã nếu cần
+        markdown_content = fix_first_roman_headings(markdown_content)
+
+        header_chunks = header_splitter.split_text(markdown_content)
+
+        for header_chunk in header_chunks:
+            chunk_metadata = base_metadata.copy()
+
+            if isinstance(header_chunk, Document):
+                chunk_metadata.update(header_chunk.metadata)
+                text_chunk = header_chunk.page_content
+            else:
+                text_chunk = str(header_chunk)
+
+            # === ĐỒNG BỘ LOGIC SPLIT ===
+            # Dùng .split_text() để trả về list[str]
+            semantic_chunks_strings = semantic_splitter.split_text(text_chunk)
+
+            # Gán metadata đã được kết hợp
+            for sc_string in semantic_chunks_strings:
+                # Tạo Document mới cho mỗi chunk
+                final_doc = Document(page_content=sc_string, metadata=chunk_metadata)
+                all_chunks.append(final_doc)
+
+    print(f"Split thành công {len(all_chunks)} chunks.")
+
+    # 3. Lưu vào Chroma (TEMP Collection)
+    if all_chunks:
+        try:
+            DB_CHROMA_TEMP.add_documents(documents=all_chunks)
+            print(f"Đã lưu {len(all_chunks)} chunks vào collection '{config.TEMP_COLLECTION_NAME}'.")
+
+            DB_DOCUMENTS_COLLECTION.update_one(
+                {"session_id": session_id, "filename": os.path.basename(file_path)},
+                {"$set": {"status": "processed"}}
+            )
+        except Exception as e:
+            print(f"Lỗi khi lưu chunks vào Chroma: {e}")
+            DB_DOCUMENTS_COLLECTION.update_one(
+                {"session_id": session_id, "filename": os.path.basename(file_path)},
+                {"$set": {"status": "error_vectorizing"}}
+            )
+    else:
+        print("Không có chunks nào được tạo ra.")
+        DB_DOCUMENTS_COLLECTION.update_one(
+            {"session_id": session_id, "filename": os.path.basename(file_path)},
+            {"$set": {"status": "error_no_chunks"}}
+        )
+
 
 # --- UTILS ---
 def image_to_base64(image_path, max_size_px=1024, jpeg_quality=85):
@@ -349,7 +578,7 @@ def get_session_history(session_id: str, user_id: str):
 # --- PROMPTS ---
 ROUTER_PROMPT_TEMPLATE = PromptTemplate.from_template("""
 Bạn là AI phân loại câu hỏi. Dựa trên Lịch sử trò chuyện và Câu hỏi mới,
-hãy phân loại câu hỏi vào MỘT trong hai loại sau:
+hãy phân loại câu hỏi vào MỘT trong ba loại sau:
 
 1.  `rag_query`: Câu hỏi yêu cầu thông tin về quy trình, thủ tục, hoặc
     thông tin cụ thể (ví dụ: "Quy trình nghỉ phép là gì?", "TT07.03 nói về cái gì?",
@@ -358,15 +587,22 @@ hãy phân loại câu hỏi vào MỘT trong hai loại sau:
 2.  `history_query`: Câu hỏi về chính cuộc hội thoại
     (ví dụ: "bạn vừa nói gì?", "câu hỏi thứ 3 của tôi là gì?", "bạn có nhớ tôi không?").
 
-Chỉ trả lời bằng MỘT từ duy nhất: `rag_query` hoặc `history_query`.
+3.  `file_rag_query`: Câu hỏi liên quan đến tài liệu, file (PDF) MÀ NGƯỜI DÙNG VỪA TẢI LÊN.
+(ví dụ: "Tóm tắt file tôi vừa gửi", "file đó nói gì về X?", "trong tài liệu có nhắc đến Y không?").
+
+Chỉ trả lời bằng MỘT từ duy nhất: `rag_query` hoặc `history_query` hoặc `file_rag_query`.
 
 ---
-Lịch sử trò chuyện:
+[Tình trạng file]
+{file_status}
+---
+[Lịch sử trò chuyện]
 {chat_history}
 ---
-Câu hỏi mới: {question}
+[Câu hỏi mới]
+{question}
 ---
-Phân loại:
+Phân loại (chỉ 1 từ):
 """)
 
 HISTORY_PROMPT_TEMPLATE = PromptTemplate.from_template("""
@@ -417,10 +653,30 @@ Câu hỏi: {question}
 Câu trả lời:
 """)
 
+FILE_RAG_PROMPT_TEMPLATE = PromptTemplate.from_template("""
+Bạn là trợ lý AI. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng
+dựa trên NGỮ CẢNH (nội dung file PDF do người dùng tải lên).
+Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
 
-def create_rag_router_chain(llm, retriever):
+Hãy trả lời bằng tiếng Việt, trích dẫn thông tin trực tiếp từ ngữ cảnh.
+- Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: {source_file})").
+- Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin này trong file bạn đã tải lên.".
+
+---
+Lịch sử trò chuyện:
+{chat_history}
+---
+Ngữ cảnh (Nội dung file PDF):
+{context}
+---
+Câu hỏi: {question}
+Câu trả lời chi tiết:
+""")
+
+
+def create_rag_router_chain(llm):
     """Tạo chain RAG có bộ định tuyến."""
-    if llm is None or retriever is None:
+    if llm is None :
         print("Lỗi: Không thể tạo RAG chain do thiếu LLM hoặc Retriever.")
         return None
 
@@ -446,20 +702,56 @@ def create_rag_router_chain(llm, retriever):
     )
 
     # --- Logic Route ---
-    def route(input_dict):
-        history = input_dict.get("chat_history", [])
-        question = input_dict["question"]
+    def route(input_dict, config=None):
+        session_id = config["configurable"]["session_id"]
+
+        # 1. Kiểm tra tình trạng file
+        has_files = check_session_has_files(session_id)
+        file_status = "Người dùng đã tải lên 1 file." if has_files else "Người dùng CHƯA tải lên file nào."
+
+        # 2. Chạy router
         try:
-            classification = router_chain.invoke({"chat_history": history, "question": question})
-            if "history_query" in classification:
-                print("--- (Router: Lịch sử) ---")
-                return history_chain
-            else:
-                print("--- (Router: RAG) ---")
-                return rag_chain
+            classification = router_chain.invoke({
+                "chat_history": input_dict.get("chat_history", []),
+                "question": input_dict["question"],
+                "file_status": file_status
+            }, config)
         except Exception as e:
-            print(f"Lỗi khi chạy router: {e}. Mặc định dùng RAG.")
-            return rag_chain  # Fallback an toàn
+            print(f"Lỗi khi chạy router: {e}. Mặc định dùng RAG chính.")
+            classification = "rag_query"
+
+        # 3. Trả về chain tương ứng
+        if "history_query" in classification:
+            print("--- (Router: Lịch sử) ---")
+            return history_chain
+
+        if "file_rag_query" in classification and has_files:
+            print(f"--- (Router: File RAG session {session_id}) ---")
+
+            # Tạo chain File RAG động (dynamic)
+            # bằng cách gọi hàm get_file_retriever với session_id
+
+            @functools.lru_cache(maxsize=1)
+            def get_cached_file_docs(query):
+                # cache 1 lần gọi cho mỗi câu hỏi
+                retriever = get_file_retriever(session_id)
+                return retriever.invoke(query)
+
+            file_rag_chain = (
+                    {"context": lambda x: format_docs(get_cached_file_docs(x["question"])),
+                     "question": lambda x: x["question"],
+                     "chat_history": lambda x: x.get("chat_history", []),
+                     "source_file": lambda x: "File bạn đã tải lên"
+                     }
+                    | FILE_RAG_PROMPT_TEMPLATE
+                    | llm
+                    | StrOutputParser()
+            )
+            return file_rag_chain
+
+        # Mặc định (hoặc khi router chọn rag_query)
+        print("--- (Router: RAG Chính) ---")
+        return rag_chain
 
     # --- Chain cơ sở có router ---
     base = (
@@ -535,7 +827,7 @@ def create_vision_chain(llm):
 # ==============================================================================
 
 # Gọi các hàm factory để tạo chain sẵn sàng cho API import
-RAG_CHAIN_WITH_HISTORY = create_rag_router_chain(TEXT_LLM, GLOBAL_RETRIEVER)
+RAG_CHAIN_WITH_HISTORY = create_rag_router_chain(TEXT_LLM)
 VISION_CHAIN_WITH_HISTORY = create_vision_chain(VISION_LLM)
 
 
@@ -592,6 +884,25 @@ def handle_multimodal_query(query_text, image_path, user_id, session_id="default
         print(f"\nLỗi khi xử lý câu hỏi ảnh: {e}")
 
 
+def handle_pdf_upload(pdf_path: str, session_id: str, user_id: str):
+    """Quy trình xử lý khi người dùng tải lên 1 file PDF."""
+    print(f"\n⏳ Đang xử lý file: {pdf_path}...")
+    try:
+        # 1. Lưu file vào Mongo (GridFS + 'documents' collection)
+        file_id = save_pdf_to_mongo(pdf_path, session_id, user_id)
+
+        if file_id:
+            # 2. Phân tích và vector hóa file
+            # (Hàm này chạy nền, nhưng CLI sẽ đợi)
+            process_and_vectorize_pdf(pdf_path, session_id, user_id)
+            print("✅ Xử lý và vector hóa file PDF thành công.")
+        else:
+            print("❌ Lỗi khi lưu file vào DB.")
+
+    except Exception as e:
+        print(f"❌ Lỗi nghiêm trọng khi xử lý file PDF: {e}")
+
+
 # ==============================================================================
 # SECTION 6: HÀM MAIN CHO CLI
 # ==============================================================================
@@ -636,16 +947,31 @@ def main():
         session_id = str(uuid.uuid4())
 
     print(f"\n🆔 Session ID hiện tại: {session_id}")
-    print("Nhập 'exit' để thoát.\n")
+    print("   Gõ 'exit' để thoát.")
+    print("   Gõ 'pdf' để tải file PDF mới.\n")
 
     # Tải lịch sử ngay khi bắt đầu (để chat_history không bị rỗng)
     get_session_history(session_id, user_id)
 
     while True:
-        query_text = input("👤 Bạn hỏi: ")
-        if query_text.lower() == "exit":
+        print("-" * 20)
+        user_input = input("👤 Bạn hỏi (hoặc gõ 'pdf'): ")
+
+        if user_input.lower() == "exit":
+            print("Tạm biệt!")
             break
 
+        # --- LUỒNG MỚI: TẢI PDF ---
+        if user_input.lower() == "pdf":
+            pdf_path = input("📂 Nhập đường dẫn PDF: ").strip()
+            if pdf_path and os.path.exists(pdf_path):
+                # Xử lý file
+                handle_pdf_upload(pdf_path, session_id, user_id)
+            else:
+                print(f"⚠️ Không tìm thấy file tại '{pdf_path}'")
+            continue
+
+        query_text = user_input
         image_path = input("🖼️ Nhập đường dẫn ảnh (Enter nếu không có): ").strip()
         print("\n💡 Trả lời:")
 

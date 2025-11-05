@@ -25,10 +25,13 @@ LLAMA_PARSE_MODEL = "anthropic-sonnet-4.5"
 VECTORSTORE_PATH = str(current_dir / "chatbot"/ "vectorstores" / "chroma_db_2")
 print(f"Using absolute VECTORSTORE_PATH: {VECTORSTORE_PATH}")
 COLLECTION_NAME = "docs_cusc"
+TEMP_COLLECTION_NAME = "temp_docs_cusc"
 
 # --- RAG PARAMS ---
 RAG_RETRIEVER_K = 40
 RAG_RERANKER_TOP_N = 6
+FILE_RAG_RETRIEVER_K = 8
+FILE_RAG_RERANKER_TOP_N = 5
 
 # --- PARSING ---
 PARSE_DATA_DIR = str(current_dir / "data")
