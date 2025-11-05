@@ -1,8 +1,8 @@
 import os
 import nest_asyncio
 import re
-import config
 
+from chatbot import config
 from llama_parse import LlamaParse
 
 nest_asyncio.apply()

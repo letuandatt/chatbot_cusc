@@ -34,7 +34,10 @@ try:
         GLOBAL_RETRIEVER,
         TEXT_LLM,
         VISION_LLM,
-        FS
+        FS,
+        save_pdf_to_mongo,
+        process_and_vectorize_pdf,
+        delete_session_and_associated_files
     )
 
     print(f"RAG pipeline components initialized successfully.")
@@ -275,18 +278,25 @@ def view_session(session_id: str, current_user_id: str = Depends(get_current_use
 # --- Delete session ---
 @app.delete("/session/{session_id}/delete")
 def delete_session(session_id: str, current_user_id: str = Depends(get_current_user_id)):
-    """Xóa session NẾU nó thuộc về user hiện tại."""
-    sessions_coll = get_mongo_collection("sessions")
-    if sessions_coll is None:
-        raise HTTPException(status_code=503, detail="Failed to connect to MongoDB")
-
+    """Xóa session VÀ TẤT CẢ CÁC FILE LIÊN QUAN (GridFS, Documents, Chroma)."""
     try:
-        result = sessions_coll.delete_one({"session_id": session_id, "user_id": current_user_id})
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {"status": "deleted", "session_id": session_id}
+        # Gọi hàm xóa mới từ query_rag.py
+        delete_results = delete_session_and_associated_files(session_id, current_user_id)
+
+        if delete_results["sessions"] == 0:
+            raise HTTPException(status_code=404, detail="Session not found or does not belong to user")
+
+        print(f"Cascade delete complete for session {session_id}: {delete_results}")
+
+        return {
+            "status": "deleted_with_files",
+            "session_id": session_id,
+            "details": delete_results
+        }
     except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"Error deleting session {session_id}: {str(ex)}")
+        print(f"Error during cascade delete for session {session_id}: {ex}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error deleting session and associated files: {str(ex)}")
 
 
 @app.delete("/sessions/all")
@@ -407,6 +417,72 @@ async def chat_with_image(
 
     return StreamingResponse(stream_response(), media_type="text/plain; charset=utf-8")
 
+# --- Chat: upload PDF ---
+@app.post("/chat/upload_pdf")
+async def chat_upload_pdf(
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        session_id: str = Form(...),
+        current_user_id: str = Depends(get_current_user_id)
+):
+    """Endpoint để tải lên file PDF và xử lý (vector hóa) trong nền."""
+
+    # 1. Xác thực session
+    if not check_session_belongs_to_user(session_id, current_user_id):
+        raise HTTPException(status_code=403, detail="Access forbidden: Session does not belong to user")
+
+    # 2. Kiểm tra định dạng file
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    # 3. Lưu file vào thư mục tạm
+    temp_dir = tempfile.mkdtemp()
+    safe_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    file_path = os.path.join(temp_dir, safe_filename)
+
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as ex:
+        shutil.rmtree(temp_dir)
+        raise HTTPException(status_code=500, detail=f"Failed to save temporary file: {str(ex)}")
+
+    # 4. Định nghĩa tác vụ chạy nền
+    def process_in_background(path, s_id, u_id):
+        """
+        Hàm này sẽ được BackgroundTasks gọi sau khi API trả về.
+        Nó sẽ lưu, vector hóa, và dọn dẹp file tạm.
+        """
+        try:
+            print(f"BG Task: Saving PDF to Mongo for session {s_id}...")
+            # Bước 4a: Lưu file vào Mongo (GridFS + 'documents' collection)
+            file_id = save_pdf_to_mongo(path, s_id, u_id)
+
+            if file_id:
+                # Bước 4b: Phân tích và vector hóa file
+                print(f"BG Task: Vectorizing PDF {file.filename} for session {s_id}...")
+                process_and_vectorize_pdf(path, s_id, u_id)
+                print(f"BG Task: Processing complete for {file.filename}.")
+            else:
+                print(f"BG Task: Failed to save PDF to Mongo for {file.filename}.")
+        except Exception as e:
+            print(f"BG Task ERROR: Failed to process file {path}: {e}")
+            traceback.print_exc()
+        finally:
+            # Bước 4c: Dọn dẹp thư mục tạm
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                print(f"BG Task: Cleaned up temporary directory: {temp_dir}")
+
+    # 5. Thêm tác vụ vào hàng đợi
+    background_tasks.add_task(process_in_background, file_path, session_id, current_user_id)
+
+    # 6. Trả về thông báo ngay lập tức
+    return {
+        "message": "File received and starting processing in background.",
+        "filename": file.filename,
+        "session_id": session_id
+    }
 
 # --- Delete user ---
 @app.delete("/user/me", status_code=status.HTTP_200_OK)
