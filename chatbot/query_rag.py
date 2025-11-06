@@ -742,16 +742,26 @@ Câu trả lời chi tiết:
 """)
 
 VISION_PROMPT_TEMPLATE = PromptTemplate.from_template("""
-Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+Bạn là trợ lý AI. Nhiệm vụ của bạn là trả lời CÂU HỎI của người dùng.
+Để trả lời, bạn phải sử dụng TẤT CẢ các thông tin sau:
+1. HÌNH ẢNH được cung cấp (để xác định đối tượng).
+2. BỐI CẢNH TÀI LIỆU (nội dung user guide) được cung cấp.
+3. LỊCH SỬ TRÒ CHUYỆN (để hiểu bối cảnh).
 
-Dựa vào lịch sử trò chuyện, hình ảnh và câu hỏi được cung cấp, hãy đưa ra câu trả lời chi tiết, chính xác và hữu ích.
-Trả lời bằng tiếng Việt.
+Hãy phân tích HÌNH ẢNH, tìm thông tin liên quan trong BỐI CẢNH TÀI LIỆU, và trả lời CÂU HỎI.
+Nếu bối cảnh không có thông tin, hãy trả lời dựa trên hình ảnh và kiến thức chung của bạn.
 
-Lịch sử trò chuyện: {chat_history}
-
-Câu hỏi: {question}
-
-Câu trả lời:
+---
+[Lịch sử trò chuyện]
+{chat_history}
+---
+[Bối cảnh tài liệu (Từ file PDF và/hoặc DB chính)]
+{context}
+---
+[Câu hỏi]
+{question}
+---
+Câu trả lời chi tiết:
 """)
 
 FILE_RAG_PROMPT_TEMPLATE = PromptTemplate.from_template("""
@@ -877,23 +887,62 @@ def create_rag_router_chain(llm):
 
 # --- CHAIN FACTORY: VISION ---
 def create_vision_chain(llm):
-    """Tạo chain Vision có bộ nhớ."""
+    """Tạo chain Vision RAG (kết hợp) có bộ nhớ."""
     if llm is None:
         print("Lỗi: Không thể tạo Vision chain do thiếu LLM.")
         return None
 
     # --- Hàm format message (lồng bên trong) ---
-    def _format_vision_message(input_dict):
+    def _format_vision_rag_message(input_dict, config=None):
+        session_id = config["configurable"]["session_id"]
+
+        # 1. Lấy thông tin cơ bản
         history = input_dict.get("chat_history", [])
         question = input_dict["question"]
         img_path = input_dict["image_path"]
-        prompt_text = VISION_PROMPT_TEMPLATE.invoke(
-            {"question": question, "chat_history": history}).to_string()  # Dùng invoke và to_string
-        image_base64 = image_to_base64(img_path)  # Đã có resize/compress
-        if not image_base64: return [HumanMessage(content="Lỗi ảnh.")]
+
+        # 2. LẤY BỐI CẢNH (RAG)
+        context_docs = []
+        has_files = check_session_has_files(session_id)
+
+        # A. Tra cứu file PDF (RAG Động)
+        if has_files:
+            try:
+                print(f"--- (Vision: Tra cứu File RAG session {session_id}) ---")
+                # Dùng chính câu hỏi để tìm context trong file PDF
+                file_retriever = get_file_retriever(session_id)
+                context_docs.extend(file_retriever.invoke(question))
+            except Exception as e:
+                print(f"Lỗi khi tra cứu file RAG cho Vision: {e}")
+
+        # B. Tra cứu DB chính (RAG Chính)
+        try:
+            print("--- (Vision: Tra cứu RAG Chính) ---")
+            context_docs.extend(get_retrieved_docs(question))
+        except Exception as e:
+            print(f"Lỗi khi tra cứu RAG chính cho Vision: {e}")
+
+        # Dùng hàm format_docs (đã sửa)
+        formatted_context = format_docs(context_docs)
+
+        # 3. Tạo Prompt
+        prompt_text = VISION_PROMPT_TEMPLATE.invoke({
+            "question": question,
+            "chat_history": history,
+            "context": formatted_context
+        }).to_string()
+
+        # 4. Chuyển ảnh sang base64
+        image_base64 = image_to_base64(img_path)
+        if not image_base64:
+            return [HumanMessage(content=f"(Lỗi ảnh) {prompt_text}")]
+
         image_data = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+
+        # 5. Trả về HumanMessage (gồm Text + Ảnh)
         return [HumanMessage(content=[{"type": "text", "text": prompt_text}, image_data])]
 
+    # Hàm này dùng để lưu lại lịch sử (giữ nguyên)
     def _format_history_input(input_dict):
         question = input_dict["question"]
         img_path = input_dict["image_path"]
@@ -906,7 +955,8 @@ def create_vision_chain(llm):
         return get_session_history(session_id, user_id)
 
     # --- Chain cơ sở ---
-    base_vision = RunnablePassthrough() | RunnableLambda(_format_vision_message) | llm
+    # Thay _format_vision_message bằng _format_vision_rag_message
+    base_vision = RunnablePassthrough() | RunnableLambda(_format_vision_rag_message) | llm
 
     # --- Bọc bộ nhớ ---
     vision_chain_with_history = RunnableWithMessageHistory(
