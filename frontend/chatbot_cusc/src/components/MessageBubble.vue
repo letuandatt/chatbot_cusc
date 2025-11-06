@@ -19,14 +19,13 @@
           </template>
 
           <template v-else>
-            <div>{{ renderMarkdown(part) }}</div>
+            <div v-html="renderMarkdown(part)"></div>
           </template>
 
         </div>
       </div>
 
-      <div v-else v-html="content"></div>
-
+      <div v-else v-html="renderMarkdown(content)"></div>
     </div>
 
   </div>

@@ -33,8 +33,15 @@
       </div>
 
       <div class="input-area">
-         <label for="file-input" class="file-label"></label>
-        <input id="file-input" type="file" ref="fileInput" @change="onFile" :disabled="!sessionId || sending"/>
+        <label for="file-input" class="file-label"></label>
+        <input
+          id="file-input"
+          type="file"
+          ref="fileInput"
+          @change="onFile"
+          :disabled="!sessionId || sending"
+          accept=".pdf,.jpg,.jpeg,.png,.webp"
+        />
         <span v-if="fileName" class="file-name">{{ fileName }}</span>
 
         <input
@@ -53,7 +60,7 @@
 
 <script>
 import MessageBubble from './MessageBubble.vue'
-import { viewSession } from '../api'
+import { viewSession, uploadPdf } from '../api'
 import { v4 as uuidv4 } from 'uuid'
 import { useAuthStore } from "../stores/auth.js";
 
@@ -68,6 +75,7 @@ export default {
     question: '',
     file: null,
     fileName: '',
+    fileType: '',
     sending: false,
     isStreaming: false,
     streamText: ''
@@ -97,22 +105,78 @@ export default {
     },
     onFile(e) {
       const f = e.target.files[0];
-      this.file = f || null;
-      this.fileName = f ? f.name : ''; // Update fileName
+      if (!f) {
+        this.resetFileInput();
+        return;
+      }
+
+      this.file = f;
+      this.fileName = f.name;
+
+      if (f.type.startsWith('image/')) {
+        this.fileType = 'image';
+        console.log("Đã chọn ảnh");
+      }
+      else if (f.type.startsWith('application/pdf')) {
+        this.fileType = "pdf";
+        console.log("Đã chọn PDF")
+        this.uploadPdfInternal();
+      }
+      else {
+        this.messages.push({ role: "assistant", content: `Lỗi: Loại file "${f.name}" không được hỗ trợ. Chỉ chấp nhận PDF, JPG, PNG.`})
+        this.resetFileInput();
+        this.scrollToBottom();
+      }
     },
     sendMessage() {
       if (!this.sessionId) {
         alert("Vui lòng tạo hoặc chọn một session trước khi gửi tin nhắn.");
         return;
       }
+      if (!this.question.trim()) return;
+
       // Nếu có file được chọn, gọi logic gửi ảnh
-      if (this.file) {
+      if (this.file && this.fileType === 'image') {
         this.sendImageInternal(); // Gọi hàm helper gửi ảnh
       }
       // Nếu không có file, gọi logic gửi text
       else {
         this.sendTextInternal(); // Gọi hàm helper gửi text
       }
+    },
+    async uploadPdfInternal() {
+      if (!this.file || this.fileType !== 'pdf' || !this.sessionId) return;
+
+      const pdfFile = this.file; // Lưu file PDF lại
+      this.sending = true; // Hiển thị trạng thái "đang bận"
+
+      this.fileName = `Đang xử lý: ${pdfFile.name}...`;
+
+      try {
+        // Gọi API (hàm chúng ta tạo ở Bước 1)
+        const response = await uploadPdf(pdfFile, this.sessionId);
+
+        this.fileName = response.filename;
+        this.file = null;
+
+      } catch (err) {
+        console.error('Lỗi khi tải PDF:', err);
+        this.fileName = `Lỗi: ${err.message}. Vui lòng chọn lại file.`;
+        setTimeout(() => {
+          if (this.fileName.startsWith("Lỗi: ")) {
+            this.resetFileInput();
+          }
+        }, 3000)
+      } finally {
+        this.sending = false; // Tắt trạng thái "đang bận"
+        // this.scrollToBottom();
+      }
+    },
+    resetFileInput() {
+      this.file = null;
+      this.fileName = '';
+      this.fileType = 'none';
+      if (this.$refs.fileInput) this.$refs.fileInput.value = null;
     },
     // --- HÀM HELPER GỬI TEXT (gần giống sendText cũ) ---
     async sendTextInternal(){
@@ -135,9 +199,7 @@ export default {
 
       // Xóa input và file đã chọn
       this.question = '';
-      this.file = null;
-      this.fileName = '';
-      if (this.$refs.fileInput) this.$refs.fileInput.value = null; // Reset input file
+      this.resetFileInput();
 
       // Thêm tin nhắn user (text + ảnh preview) vào giao diện
       // Tạo URL tạm thời cho ảnh để hiển thị ngay

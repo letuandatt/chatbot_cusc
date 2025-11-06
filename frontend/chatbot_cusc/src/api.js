@@ -67,7 +67,6 @@ api.interceptors.response.use(
 // --- Các hàm API cũ (Sessions, Chat) ---
 // Giữ nguyên các hàm này. Interceptor sẽ tự thêm token.
 export const listSessions = (limit = 50) => api.get(`/sessions?limit=${limit}`).then(r => r.data)
-export const viewSession = (sessionId) => api.get(`/session/${sessionId}`).then(r => r.data)
 export const createSession = () => api.post('/session/new').then(r => r.data)
 export const deleteSession = (sessionId) => api.delete(`/session/${sessionId}/delete`).then(r => r.data)
 export const deleteAllSessions = () => api.delete('/sessions/all').then(r => r.data)
@@ -87,6 +86,70 @@ export const changUserName = (currentName, newName) => {
         current_name: currentName,
         new_name: newName
     }).then(r => r.data);
+}
+
+async function handleResponse(resp) {
+  if (resp.ok) {
+    return resp.json(); // Trả về JSON cho các hàm gọi
+  }
+
+  // Xử lý lỗi
+  const errorData = await resp.json().catch(() => ({ detail: resp.statusText }));
+  const errorMessage = errorData.detail || 'Lỗi không xác định từ server.';
+
+  // Nếu lỗi 401, tự động logout
+  if (resp.status === 401) {
+    const authStore = useAuthStore();
+    authStore.logout();
+  }
+
+  throw new Error(errorMessage);
+}
+
+/**
+ * Tải lịch sử tin nhắn của một session
+ * (Đây là hàm 'viewSession' mà ChatWindow.vue của bạn đã import)
+ */
+export async function viewSession(sessionId) {
+  const authStore = useAuthStore();
+  const token = authStore.token;
+  if (!token) throw new Error("Chưa đăng nhập.");
+
+  const resp = await fetch(`${API_BASE_URL}/session/${sessionId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  return handleResponse(resp);
+}
+
+/**
+ * [HÀM MỚI] Tải file PDF lên để xử lý RAG
+ * @param {File} file - Đối tượng File (chỉ PDF)
+ * @param {string} sessionId - ID của session hiện tại
+ */
+export async function uploadPdf(file, sessionId) {
+  const authStore = useAuthStore();
+  const token = authStore.token;
+  if (!token) throw new Error('Bạn chưa đăng nhập.');
+
+  const form = new FormData();
+  form.append('file', file, file.name);
+  form.append('session_id', sessionId);
+
+  const resp = await fetch(`${API_BASE_URL}/chat/upload_pdf`, {
+    method: 'POST',
+    body: form,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      // Không cần 'Content-Type' khi dùng FormData, trình duyệt tự xử lý
+    },
+  });
+
+  // Endpoint này trả về JSON, không phải stream
+  return handleResponse(resp);
 }
 
 // Lưu ý: Các hàm gọi chat (streamChatText, streamChatImage)

@@ -52,10 +52,6 @@
           {{ changePasswordStatus.loading ? 'Đang xử lý...' : 'Đổi mật khẩu' }}
         </button>
       </form>
-
-      <p class="placeholder-text">(Chức năng đổi tên sẽ được thêm vào sau)</p>
-
-
     </div>
   </div>
 </template>
