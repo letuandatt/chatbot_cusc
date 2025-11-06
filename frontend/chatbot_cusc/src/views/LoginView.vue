@@ -22,9 +22,9 @@
       <p class="switch-auth">
         Chưa có tài khoản? <router-link to="/register">Đăng ký ngay</router-link>
       </p>
-      <p class="forgot-password">
-        Quên mật khẩu? <router-link to="/forgot-password">Quên mật khẩu</router-link>
-      </p>
+<!--      <p class="forgot-password">-->
+<!--        Quên mật khẩu? <router-link to="/forgot-password">Quên mật khẩu</router-link>-->
+<!--      </p>-->
     </div>
   </div>
 </template>
