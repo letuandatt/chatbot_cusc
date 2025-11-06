@@ -508,75 +508,100 @@ def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
         )
 
 
+# THAY THẾ hàm `delete_session_and_associated_files` trong file query_rag.py của bạn:
+
 def delete_session_and_associated_files(session_id: str, user_id: str) -> dict:
     """
-    Xóa 1 session và TẤT CẢ các file, chunks liên quan.
-    1. Xóa record trong 'sessions'.
-    2. Xóa records trong 'documents'.
-    3. Xóa file gốc trong GridFS.
-    4. Xóa chunks trong ChromaDB (temp_docs_cusc).
+    Xóa 1 session và TẤT CẢ các file, chunks liên quan (bao gồm PDF và Ảnh).
+    1. Tìm session, lấy ID ảnh.
+    2. Tìm file PDF, lấy ID file PDF.
+    3. Xóa tất cả file (Ảnh + PDF) khỏi GridFS.
+    4. Xóa record trong 'sessions'.
+    5. Xóa records trong 'documents'.
+    6. Xóa chunks trong ChromaDB.
     """
     sessions_coll = get_mongo_collection("sessions")
     docs_coll = DB_DOCUMENTS_COLLECTION
     fs_client = FS
     chroma_temp = DB_CHROMA_TEMP
 
-    if session_id is None or user_id is None or fs_client is None or chroma_temp is None:
+    if sessions_coll is None or fs_client is None or chroma_temp is None or docs_coll is None:
         raise Exception("Một hoặc nhiều thành phần DB (Mongo, GridFS, Chroma) chưa được khởi tạo")
 
     deleted_counts = {
         "sessions": 0,
         "document_records": 0,
         "gridfs_files": 0,
-        "chroma_chunks": "N/A"  # Chroma không trả về số lượng
+        "chroma_chunks": "N/A"
     }
 
-    # 1. Xóa session chính (và kiểm tra quyền sở hữu)
-    session_delete_result = sessions_coll.delete_one({"session_id": session_id, "user_id": user_id})
-    deleted_counts["sessions"] = session_delete_result.deleted_count
+    gridfs_ids_to_delete = []
 
-    if session_delete_result.deleted_count == 0:
-        # Nếu không xóa được session nào (không tìm thấy, hoặc không thuộc user)
-        # thì không thực hiện các bước tiếp theo.
-        print(f"Không tìm thấy session {session_id} thuộc user {user_id} để xóa.")
-        return deleted_counts
-
-    print(f"Đã xóa record session {session_id} khỏi 'sessions'.")
-
-    # 2. & 3. Xóa file trong 'documents' và GridFS
+    # --- Bước 1: Tìm session và thu thập ID ảnh TRƯỚC KHI XÓA ---
     try:
-        # Tìm tất cả các file document thuộc session này
-        doc_records = list(docs_coll.find({"session_id": session_id, "user_id": user_id}, {"gridfs_id": 1}))
+        session_doc = sessions_coll.find_one({"session_id": session_id, "user_id": user_id})
+        if not session_doc:
+            print(f"Không tìm thấy session {session_id} thuộc user {user_id} để xóa.")
+            return deleted_counts
 
-        gridfs_ids_to_delete = []
+        # Thu thập image_gridfs_id từ messages
+        for msg in session_doc.get("messages", []):
+            if msg.get("image_gridfs_id"):
+                try:
+                    gridfs_ids_to_delete.append(ObjectId(msg["image_gridfs_id"]))
+                except Exception as e:
+                    print(f"Bỏ qua image_gridfs_id không hợp lệ: {msg['image_gridfs_id']}, lỗi: {e}")
+
+        print(f"Tìm thấy {len(gridfs_ids_to_delete)} ảnh cần xóa từ session {session_id}.")
+
+    except Exception as e:
+        print(f"Lỗi khi tìm session doc hoặc thu thập ID ảnh: {e}")
+        # Không dừng lại, vẫn tiếp tục xóa các thứ khác
+        pass  # Chúng ta vẫn sẽ thử xóa dựa trên session_id
+
+    # --- Bước 2: Thu thập ID file PDF (từ collection 'documents') ---
+    try:
+        doc_records = list(docs_coll.find({"session_id": session_id, "user_id": user_id}, {"gridfs_id": 1}))
+        pdf_ids = []
         for doc in doc_records:
             if doc.get("gridfs_id"):
-                gridfs_ids_to_delete.append(ObjectId(doc["gridfs_id"]))
+                try:
+                    pdf_ids.append(ObjectId(doc["gridfs_id"]))
+                except Exception as e:
+                    print(f"Bỏ qua gridfs_id (PDF) không hợp lệ: {doc['gridfs_id']}, lỗi: {e}")
 
-        # 3a. Xóa file khỏi GridFS
-        for file_id in gridfs_ids_to_delete:
-            try:
-                fs_client.delete(file_id)
-                deleted_counts["gridfs_files"] += 1
-            except Exception as fs_e:
-                print(f"Lỗi khi xóa file GridFS {file_id}: {fs_e}")
-
-        print(f"Đã xóa {deleted_counts['gridfs_files']} file(s) khỏi GridFS.")
-
-        # 2a. Xóa record khỏi 'documents'
-        doc_delete_result = docs_coll.delete_many({"session_id": session_id, "user_id": user_id})
-        deleted_counts["document_records"] = doc_delete_result.deleted_count
-        print(f"Đã xóa {deleted_counts['document_records']} record(s) khỏi 'documents'.")
+        print(f"Tìm thấy {len(pdf_ids)} file PDF cần xóa từ 'documents' cho session {session_id}.")
+        gridfs_ids_to_delete.extend(pdf_ids)
 
     except Exception as mongo_e:
-        print(f"Lỗi khi dọn dẹp 'documents' hoặc GridFS: {mongo_e}")
+        print(f"Lỗi khi tìm file PDF trong 'documents': {mongo_e}")
 
-    # 4. Xóa chunks khỏi ChromaDB
+    # --- Bước 3: Xóa tất cả file khỏi GridFS ---
+    unique_ids_to_delete = list(set(gridfs_ids_to_delete))  # Tránh xóa trùng lặp
+    for file_id in unique_ids_to_delete:
+        try:
+            fs_client.delete(file_id)
+            deleted_counts["gridfs_files"] += 1
+        except Exception as fs_e:
+            print(f"Lỗi khi xóa file GridFS {file_id}: {fs_e}")
+
+    print(f"Đã xóa tổng cộng {deleted_counts['gridfs_files']} file(s) (Ảnh + PDF) khỏi GridFS.")
+
+    # --- Bước 4: Xóa record session ---
+    session_delete_result = sessions_coll.delete_one({"session_id": session_id, "user_id": user_id})
+    deleted_counts["sessions"] = session_delete_result.deleted_count
+    print(f"Đã xóa {deleted_counts['sessions']} record(s) khỏi 'sessions'.")
+
+    # --- Bước 5: Xóa records 'documents' (PDF) ---
+    doc_delete_result = docs_coll.delete_many({"session_id": session_id, "user_id": user_id})
+    deleted_counts["document_records"] = doc_delete_result.deleted_count
+    print(f"Đã xóa {deleted_counts['document_records']} record(s) khỏi 'documents'.")
+
+    # --- Bước 6: Xóa chunks khỏi ChromaDB ---
     try:
-        # Sử dụng filter 'where' để xóa các chunks có metadata session_id khớp
         chroma_temp.delete(where={"session_id": session_id})
         deleted_counts["chroma_chunks"] = "triggered"
-        print(f"Đã kích hoạt xóa chunks cho session {session_id} khỏi Chroma '{config.TEMP_COLLECTION_NAME}'.")
+        print(f"Đã kích hoạt xóa chunks cho session {session_id} khỏi Chroma.")
     except Exception as chroma_e:
         print(f"Lỗi khi xóa chunks khỏi Chroma: {chroma_e}")
         deleted_counts["chroma_chunks"] = f"error: {chroma_e}"
