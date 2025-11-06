@@ -301,16 +301,50 @@ def delete_session(session_id: str, current_user_id: str = Depends(get_current_u
 
 
 @app.delete("/sessions/all")
+@app.delete("/sessions/all")
 def delete_all_user_sessions(current_user_id: str = Depends(get_current_user_id)):
-    """Xóa TẤT CẢ các session CỦA USER HIỆN TẠI khỏi MongoDB."""
-    coll = get_mongo_collection("sessions")
-    if coll is None:
+    """Xóa TẤT CẢ các session VÀ DỮ LIỆU LIÊN QUAN (PDF, Ảnh, Chunks) của user."""
+
+    sessions_coll = get_mongo_collection("sessions")
+    if sessions_coll is None:
         raise HTTPException(status_code=503, detail="Database not connected")
+
+    print(f"--- BẮT ĐẦU XÓA TẤT CẢ SESSION CHO USER: {current_user_id} ---")
+
     try:
-        result = coll.delete_many({"user_id": current_user_id})  # Xóa tất cả document
-        print(f"User {current_user_id} deleted {result.deleted_count} sessions.")
-        return {"status": "deleted_user_sessions", "count": result.deleted_count}
+        # 1. Tìm tất cả session_id của user này
+        session_ids_to_delete = [
+            s['session_id'] for s in sessions_coll.find(
+                {"user_id": current_user_id},
+                {"session_id": 1, "_id": 0}
+            )
+        ]
+
+        if not session_ids_to_delete:
+            print(f"User {current_user_id} không có session nào để xóa.")
+            return {"status": "no_sessions_found", "count": 0}
+
+        print(f"Tìm thấy {len(session_ids_to_delete)} session(s) cần xóa cascade...")
+
+        total_deleted_count = 0
+
+        # 2. Lặp qua từng session và gọi hàm xóa cascade
+        for session_id in session_ids_to_delete:
+            try:
+                print(f"Đang xóa cascade cho session: {session_id}...")
+                delete_results = delete_session_and_associated_files(session_id, current_user_id)
+                if delete_results["sessions"] > 0:
+                    total_deleted_count += 1
+            except Exception as e_inner:
+                print(f"Lỗi khi xóa cascade session {session_id}: {e_inner}")
+                # Tiếp tục chạy dù có lỗi 1 session
+
+        print(f"--- HOÀN TẤT XÓA TẤT CẢ SESSION. Đã xóa {total_deleted_count} session(s) ---")
+        return {"status": "all_sessions_deleted_with_files", "count": total_deleted_count}
+
     except Exception as e:
+        print(f"Lỗi nghiêm trọng khi thực hiện delete_all_user_sessions: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
