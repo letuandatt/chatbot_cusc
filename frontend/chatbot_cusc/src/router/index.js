@@ -34,6 +34,13 @@ const routes = [
         meta: { requiresAuth: true }
     },
     {
+        path: '/files',
+        name: 'Files',
+        // Lazy load component
+        component: () => import('../views/FileListView.vue'),
+        meta: { requiresAuth: true } // Đảm bảo chỉ user đã đăng nhập mới xem được
+      },
+    {
         path: '/forgot-password',
         name: "ForgotPassword",
         component: () => import('../views/ForgetPasswordView.vue'),

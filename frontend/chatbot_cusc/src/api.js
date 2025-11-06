@@ -126,7 +126,7 @@ export async function viewSession(sessionId) {
 }
 
 /**
- * [HÀM MỚI] Tải file PDF lên để xử lý RAG
+ * Tải file PDF lên để xử lý RAG
  * @param {File} file - Đối tượng File (chỉ PDF)
  * @param {string} sessionId - ID của session hiện tại
  */
@@ -150,6 +150,68 @@ export async function uploadPdf(file, sessionId) {
 
   // Endpoint này trả về JSON, không phải stream
   return handleResponse(resp);
+}
+
+/**
+ * Lấy danh sách tất cả file đã tải lên của user
+ */
+export async function listUserDocuments() {
+  const authStore = useAuthStore();
+  const token = authStore.token;
+  if (!token) throw new Error("Chưa đăng nhập.");
+
+  const resp = await fetch(`${API_BASE_URL}/user/documents`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  return handleResponse(resp); // Dùng lại hàm helper
+}
+
+export async function downloadDocument(fileId, filename) {
+  const authStore = useAuthStore();
+  const token = authStore.token;
+  if (!token) throw new Error("Chưa đăng nhập.");
+
+  const resp = await fetch(`${API_BASE_URL}/download/document/${fileId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+    },
+  });
+
+  if (!resp.ok) {
+    // Thử đọc lỗi JSON nếu có
+    const errorData = await resp.json().catch(() => ({ detail: resp.statusText }));
+    const errorMessage = errorData.detail || 'Tải file thất bại.';
+    if (resp.status === 401) authStore.logout();
+    throw new Error(errorMessage);
+  }
+
+  // Xử lý file blob
+  try {
+    const blob = await resp.blob();
+
+    // Tạo một URL tạm thời cho blob
+    const url = window.URL.createObjectURL(blob);
+
+    // Tạo một thẻ <a> ẩn để kích hoạt download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename; // Tên file bạn muốn lưu
+    document.body.appendChild(a); // Phải thêm vào DOM
+    a.click(); // Kích hoạt click
+
+    // Dọn dẹp
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+  } catch (e) {
+    console.error("Lỗi xử lý blob:", e);
+    throw new Error("Không thể xử lý file tải về.");
+  }
 }
 
 // Lưu ý: Các hàm gọi chat (streamChatText, streamChatImage)

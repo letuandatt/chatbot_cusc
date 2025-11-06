@@ -14,6 +14,7 @@
             <router-link to="/profile" class="profile-button" title="Thông tin tài khoản">
               👤
             </router-link>
+            <router-link to="/files" class="profile-button">📁</router-link>
           </div>
     </div>
 
@@ -51,7 +52,7 @@
           placeholder="Gõ câu hỏi..."
           :disabled="!sessionId || sending" /> <button
           class="btn send" @click="sendMessage"
-          :disabled="!sessionId || sending || !question.trim()"> Send
+          :disabled="!sessionId || sending || !question.trim() || isProcessingPDF"> Send
         </button>
       </div>
     </template>
@@ -78,7 +79,8 @@ export default {
     fileType: '',
     sending: false,
     isStreaming: false,
-    streamText: ''
+    streamText: '',
+    isProcessingPDF: false,
   }},
   computed: {
     sessionIdShort(){ return this.sessionId ? this.sessionId.slice(0,8) : '—' }
@@ -148,8 +150,7 @@ export default {
       if (!this.file || this.fileType !== 'pdf' || !this.sessionId) return;
 
       const pdfFile = this.file; // Lưu file PDF lại
-      this.sending = true; // Hiển thị trạng thái "đang bận"
-
+      this.isProcessingPDF = true;
       this.fileName = `Đang xử lý: ${pdfFile.name}...`;
 
       try {
@@ -169,6 +170,7 @@ export default {
         }, 3000)
       } finally {
         this.sending = false; // Tắt trạng thái "đang bận"
+        this.isProcessingPDF = false;
         // this.scrollToBottom();
       }
     },
@@ -184,9 +186,13 @@ export default {
       const q = this.question;
       this.question = ''; // Xóa input
 
+      if (this.fileType === 'pdf') {
+        this.resetFileInput();
+      }
+
       // Thêm tin nhắn user vào giao diện
       this.messages.push({ role: 'user', content: q });
-      this.$nextTick(()=> this.scrollToBottom());
+      await this.$nextTick(() => this.scrollToBottom());
 
       // Bắt đầu stream từ backend
       await this.streamChatText(q); // Hàm stream giữ nguyên
