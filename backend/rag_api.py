@@ -12,6 +12,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from bson import ObjectId
 from datetime import datetime, timezone
 from pydantic import BaseModel, EmailStr, constr
+from pymongo import DESCENDING
 
 from chatbot.auth_utils import (
     verify_password,
@@ -612,6 +613,26 @@ async def change_current_user_name(
     except Exception as e:
         print(f"Lỗi khi đổi tên user {current_user_id}: {e}")
         raise HTTPException(status_code=500, detail="Lỗi máy chủ khi đổi tên user.")
+
+
+# --- List documents ---
+@app.get("/user/documents", status_code=status.HTTP_200_OK)
+async def list_documents(current_user_id: str = Depends(get_current_user_id)):
+    """Lấy danh sách file đã tải liên bởi user hiện tại"""
+    docs_coll = get_mongo_collection("documents")
+    if docs_coll is None:
+        raise HTTPException(status_code=503, detail="Database not connected")
+
+    try:
+        docs_cursor = docs_coll.find(
+            {"user_id": current_user_id},
+            {"_id": 0, "filename": 1, "created_at": 1, "session_id": 1, "status": 1, "gridfs_id": 1}
+        ).sort("created_at", DESCENDING)
+
+        documents = list(docs_cursor)
+        return {"documents": documents, "count": len(documents)}
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"Error listing documents: {ex}")
 
 # --- Root ---
 @app.get("/")
