@@ -8,7 +8,6 @@
         @deleteAll="onDeleteAll"
         @logout="handleLogout"/>
     <ChatWindow
-        :key="currentSession"
         :initialSessionId="currentSession"
         @deselect-session="onDeselectSession"/>
   </div>
@@ -32,13 +31,10 @@ export default {
       else {
         localStorage.removeItem('current_session')
       }
-      // reload page to pass prop — alternative: use event bus; easiest is to refresh
-      window.location.reload()
     },
     onCreated(id){
       this.currentSession = id
       localStorage.setItem('current_session', id)
-      window.location.reload()
     },
     onDeleteAll(){
       console.log("App: All sessions deleted");
