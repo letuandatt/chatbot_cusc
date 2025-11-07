@@ -6,6 +6,7 @@ import gridfs
 import functools
 import pytz
 import hashlib
+import chromadb
 
 from chatbot import config
 from chatbot.extract_data import fix_first_roman_headings
@@ -101,6 +102,11 @@ def check_session_belongs_to_user(session_id: str, user_id: str) -> bool:
 
 
 # --- RAG COMPONENTS ---
+_chroma_client = chromadb.HttpClient(
+    host="127.0.0.1",
+    port="8001"
+)
+
 try:
     RAG_EMBEDDING_MODEL = GoogleGenerativeAIEmbeddings(
         model=config.EMBEDDING_MODEL_NAME,
@@ -108,7 +114,7 @@ try:
     )
 
     DB_CHROMA = Chroma(
-        persist_directory=config.VECTORSTORE_PATH,
+        client=_chroma_client,
         embedding_function=RAG_EMBEDDING_MODEL,
         collection_name=config.COLLECTION_NAME
     )
@@ -135,7 +141,7 @@ except Exception as e:
 try:
     # Khởi tạo Chroma instance cho collection "temp"
     DB_CHROMA_TEMP = Chroma(
-        persist_directory=config.VECTORSTORE_PATH,
+        client=_chroma_client,
         embedding_function=RAG_EMBEDDING_MODEL,
         collection_name=config.TEMP_COLLECTION_NAME  # Sử dụng collection "temp"
     )
@@ -507,8 +513,6 @@ def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
             {"$set": {"status": "error_no_chunks"}}
         )
 
-
-# THAY THẾ hàm `delete_session_and_associated_files` trong file query_rag.py của bạn:
 
 def delete_session_and_associated_files(session_id: str, user_id: str) -> dict:
     """

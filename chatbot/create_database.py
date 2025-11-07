@@ -8,6 +8,7 @@ from pathlib import Path
 
 import re
 import config
+import chromadb
 
 
 def create_data(CHROMA_PATH=config.VECTORSTORE_PATH, google_api_key=config.GOOGLE_API_KEY):
@@ -128,9 +129,15 @@ def create_data(CHROMA_PATH=config.VECTORSTORE_PATH, google_api_key=config.GOOGL
 
     def save_chunks(chunks):
         embedding_model = load_embedding()
+
+        _chroma_client = chromadb.HttpClient(
+            host="127.0.0.1",
+            port="8001"
+        )
+
         Chroma.from_documents(
             documents=chunks,
-            persist_directory=CHROMA_PATH,
+            client=_chroma_client,
             embedding=embedding_model,
             collection_name=config.COLLECTION_NAME
         )
