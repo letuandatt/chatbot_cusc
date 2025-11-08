@@ -1,3 +1,5 @@
+ragas
+datasets
 langchain-chroma
 fastapi~=0.120.0
 bson~=0.5.10
