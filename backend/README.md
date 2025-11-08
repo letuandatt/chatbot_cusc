@@ -1,90 +1,105 @@
 # Backend: FastAPI API Server
 
-Chào mừng bạn đến với server Backend của CUSC Chatbot. Đây là một API Gateway được xây dựng bằng FastAPI, chịu trách nhiệm xử lý logic nghiệp vụ, xác thực, và cung cấp dữ liệu cho Frontend.
+Phần backend của CUSC Chatbot đóng vai trò là **API Gateway**, được xây dựng trên nền **FastAPI**.  
+Thành phần này chịu trách nhiệm xử lý logic nghiệp vụ, xác thực người dùng và cung cấp dữ liệu cho frontend.
 
-## 🏛️ Kiến trúc
+---
 
-Server này được cấu trúc theo các module (router) để dễ dàng bảo trì:
+## 🏛️ Kiến trúc Hệ thống
 
--   **`main.py`**: Điểm vào (entrypoint) chính, khởi tạo app FastAPI và include các router.
--   **`models.py`**: Chứa tất cả các mô hình Pydantic (validation data).
--   **`config.py`**: Chứa các hằng số cấu hình (như múi giờ `VN_TZ`).
--   **`routers/`**: Thư mục chứa logic nghiệp vụ chính:
-    -   **`auth.py`**: Xử lý đăng ký (`/register`) và đăng nhập (`/token`).
-    -   **`user.py`**: Quản lý hồ sơ người dùng, đổi mật khẩu, và chứa API kiểm tra trạng thái file (`/user/document/status`).
-    -   **`session.py`**: Quản lý lịch sử chat (tạo, xóa, đổi tên, liệt kê).
-    -   **`chat.py`**: Xử lý các endpoint RAG (`/chat/text`, `/chat/image`, `/upload_pdf`).
+Cấu trúc server được tổ chức theo mô hình module (router) nhằm đảm bảo khả năng mở rộng và bảo trì dễ dàng.
 
-## ✨ Tính năng Cốt lõi
+- **`main.py`** – Điểm khởi tạo (entrypoint) chính, cấu hình ứng dụng FastAPI và nạp các router.  
+- **`models.py`** – Khai báo toàn bộ mô hình dữ liệu sử dụng Pydantic để xác thực dữ liệu vào/ra.  
+- **`config.py`** – Chứa các hằng số và thông số cấu hình chung (ví dụ: múi giờ `VN_TZ`).  
+- **`routers/`** – Thư mục chứa logic nghiệp vụ chính:
+  - **`auth.py`** – Xử lý đăng ký (`/register`) và đăng nhập (`/token`).  
+  - **`user.py`** – Quản lý hồ sơ người dùng, thay đổi mật khẩu và kiểm tra trạng thái xử lý tệp (`/user/document/status`).  
+  - **`session.py`** – Quản lý lịch sử hội thoại (tạo, xóa, đổi tên, liệt kê).  
+  - **`chat.py`** – Cung cấp các endpoint RAG (`/chat/text`, `/chat/image`, `/upload_pdf`).  
 
-### 1. Xử lý PDF (BackgroundTasks)
+---
 
-Khi người dùng upload một file PDF qua endpoint `/upload_pdf`:
+## ✨ Tính năng Chính
 
-1.  API **ngay lập tức** trả về 200 OK cho frontend.
-2.  Một tác vụ nền (`BackgroundTasks`) được kích hoạt.
-3.  Tác vụ này gọi hàm `process_and_vectorize_pdf` (từ `chatbot/query_rag.py`) để xử lý file.
+### 1. Xử lý PDF bằng BackgroundTasks
 
-### 2. Xác thực (JWT)
+Khi người dùng tải lên tệp PDF qua endpoint `/upload_pdf`:
 
-Hệ thống sử dụng JWT (JSON Web Tokens) để xác thực.
+1. API phản hồi ngay lập tức với mã trạng thái `200 OK` để tránh chờ đợi.  
+2. Một tiến trình nền (`BackgroundTasks`) được kích hoạt.  
+3. Tiến trình này gọi hàm `process_and_vectorize_pdf` trong `chatbot/query_rag.py` để xử lý và lưu trữ dữ liệu.
 
--   File `chatbot/auth_utils.py` cung cấp các hàm `create_access_token`, `verify_password`, v.v.
--   Router `auth.py` sử dụng chúng để cấp token.
--   Tất cả các endpoint quan trọng (như trong `chat.py`, `user.py`, `session.py`) đều được bảo vệ bằng `Depends(get_current_user_id)`.
+### 2. Xác thực bằng JWT
 
-### 3. API Polling
+Hệ thống áp dụng **JSON Web Tokens (JWT)** để quản lý xác thực và phân quyền.
 
-Để frontend biết khi nào `BackgroundTasks` xử lý PDF xong, backend cung cấp endpoint:
-`GET /user/document/status`
+- File `chatbot/auth_utils.py` cung cấp các hàm như `create_access_token`, `verify_password`, ...  
+- Router `auth.py` đảm nhiệm việc cấp phát token.  
+- Các endpoint quan trọng (`chat.py`, `user.py`, `session.py`) đều được bảo vệ thông qua `Depends(get_current_user_id)`.
 
-Endpoint này cho phép frontend "hỏi" trạng thái của file (ví dụ: `processing`, `processed`, `error_parsing`), dựa trên `filename` và `session_id`.
+### 3. Cơ chế Polling API
 
-## 🚀 Hướng dẫn Cài đặt & Chạy
+Để frontend theo dõi trạng thái xử lý tệp PDF, backend cung cấp endpoint:  
+`GET /user/document/status`  
 
-Để chạy server Backend, bạn cần đảm bảo các dịch vụ (services) nền đã chạy.
+Endpoint này cho phép frontend truy vấn trạng thái tệp dựa trên `filename` và `session_id`, ví dụ:  
+- `processing` – Đang xử lý.  
+- `processed` – Hoàn tất xử lý.  
+- `error_parsing` – Lỗi khi trích xuất nội dung.
 
-### 1. Điều kiện tiên quyết (Services)
+---
 
-Trước khi chạy FastAPI, hãy đảm bảo 2 dịch vụ sau đang chạy:
+## 🚀 Hướng dẫn Cài đặt và Khởi chạy
 
-1.  **MongoDB Server:** Khởi động dịch vụ MongoDB của bạn.
-2.  **ChromaDB Server:** (Bắt buộc) Mở một terminal và chạy server ChromaDB.
-    ```bash
-    chroma run --host 127.0.0.1 --port 8001 --path "./chatbot/vectorstores/chroma_db_2"
-    ```
-    *(Lưu ý: `--path` là đường dẫn đến nơi bạn muốn lưu trữ vector, tính từ thư mục gốc của dự án)*
+### 1. Dịch vụ Nền (Prerequisites)
+
+Trước khi khởi động FastAPI, cần đảm bảo các dịch vụ sau đang hoạt động:
+
+1. **MongoDB Server** – Cơ sở dữ liệu chính của hệ thống.  
+2. **ChromaDB Server** – Cơ sở dữ liệu vector cho RAG. Khởi động bằng lệnh:
+   ```bash
+   chroma run --host 127.0.0.1 --port 8001 --path "./chatbot/vectorstores/chroma_db_2"
+   ```
+   *(Tham số `--path` xác định vị trí lưu trữ vector, tính từ thư mục gốc dự án.)*
 
 ### 2. Cài đặt Python
 
-Đứng từ thư mục gốc, tạo và kích hoạt môi trường ảo:
+Từ thư mục gốc của dự án, tạo và kích hoạt môi trường ảo:
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # (Linux/Mac)
-.\.venv\Scripts\activate   # (Windows)
+source .venv/bin/activate  # Đối với Linux/Mac
+.\.venv\Scripts ctivate   # Đối với Windows
 ```
 
-### 3. Cấu hình Biến môi trường
+### 3. Thiết lập Biến Môi trường
 
-1.  Tạo file `.env` (từ file `.env.example` nếu có).
-2.  Đảm bảo các biến sau được thiết lập:
-    ```ini
-    # Dùng cho RAG (chatbot/query_rag.py)
-    GOOGLE_API_KEY=
-    COHERE_API_KEY=
-    LLAMA_CLOUD_API_KEY=
+1. Tạo file `.env` (có thể sao chép từ `.env.example` nếu có).  
+2. Đảm bảo các biến sau được cấu hình đầy đủ:
 
-    # Dùng cho MongoDB (chatbot/query_rag.py)
-    MONGO_URI=
-    MONGO_DB_NAME=
+```ini
+# Khóa API cho các dịch vụ RAG
+GOOGLE_API_KEY=
+COHERE_API_KEY=
+LLAMA_CLOUD_API_KEY=
 
-    # Dùng cho JWT (chatbot/auth_utils.py)
-    SECRET_KEY="your_super_secret_key_for_jwt"
-    ```
+# Thông tin kết nối MongoDB
+MONGO_URI=
+MONGO_DB_NAME=
 
-### 4. Khởi động Server
+# Cấu hình JWT
+SECRET_KEY="your_super_secret_key_for_jwt"
+```
 
-Chạy Uvicorn từ thư mục gốc của dự án:
+### 4. Khởi động Server FastAPI
+
+Thực thi lệnh sau từ thư mục gốc dự án:
 
 ```bash
 uvicorn backend.main:app --reload --port 8000
+```
+
+Sau khi khởi động, backend sẽ lắng nghe tại địa chỉ:  
+👉 `http://localhost:8000`
+
