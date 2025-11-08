@@ -1,96 +1,104 @@
 # Chatbot Core: AI & RAG Logic
 
-Đây là "bộ não" của toàn bộ dự án. Thư mục này **không phải là một server chạy độc lập**, mà là một "thư viện" Python chứa tất cả logic RAG, được `backend` (FastAPI) import và sử dụng.
+Thư mục này là **thành phần lõi (core)** của toàn bộ hệ thống chatbot.  
+Nó **không phải là một máy chủ độc lập**, mà là một **thư viện Python** chứa toàn bộ logic RAG, được **backend (FastAPI)** import và sử dụng.
 
-## 🏛️ Cấu trúc
+---
 
--   **`query_rag.py`**: File quan trọng nhất, chứa toàn bộ logic RAG, các chain, và hàm xử lý file.
--   **`agents.py`**: Script (chạy 1 lần) để điều phối việc xử lý PDF (`extract_data.py`) và nạp chúng vào ChromaDB (`create_database.py`).
--   **`create_database.py`**: Chứa logic `create_data` để nạp dữ liệu chung (Global) vào ChromaDB.
--   **`extract_data.py`**: Chứa hàm `llama_parse_md` và `fix_first_roman_headings`.
--   **`config.py`**: Quản lý các hằng số (API keys, tên model, đường dẫn DB).
--   **`auth_utils.py`**: Các hàm tiện ích để xử lý JWT (tạo hash, verify token).
+## 🏛️ Cấu trúc Thành phần
 
-## ✨ Logic RAG Cốt lõi (trong `query_rag.py`)
+- **`query_rag.py`** – Thành phần trung tâm, chứa toàn bộ logic RAG, các chuỗi xử lý (chain) và hàm xử lý tệp.
+- **`agents.py`** – Tập lệnh điều phối quá trình xử lý và nạp dữ liệu PDF (`extract_data.py`) vào ChromaDB (`create_database.py`).
+- **`create_database.py`** – Triển khai hàm `create_data` phục vụ việc nạp dữ liệu tri thức chung (Global) vào ChromaDB.
+- **`extract_data.py`** – Bao gồm các hàm `llama_parse_md` và `fix_first_roman_headings` để trích xuất và chuẩn hóa văn bản.
+- **`config.py`** – Quản lý các hằng số cấu hình (API keys, tên mô hình, đường dẫn cơ sở dữ liệu).
+- **`auth_utils.py`** – Cung cấp các hàm tiện ích để xử lý JWT (tạo hash, xác minh token).
 
-Hệ thống RAG của chúng ta sử dụng một "Router" (Bộ định tuyến) để quyết định nguồn tri thức nào cần dùng cho câu trả lời.
+---
 
-### 1. Global Retriever (Kho tri thức chung)
+## ✨ Logic RAG Cốt lõi (`query_rag.py`)
 
--   **Mục tiêu:** Trả lời các câu hỏi chung về quy trình của CUSC.
--   **Thành phần:** `GLOBAL_RETRIEVER`.
--   **Cách hoạt động:**
-    1.  Dữ liệu được nạp 1 lần từ `agents.py` -> `create_database.py` vào collection `docs_cusc` trong ChromaDB.
-    2.  Khi truy vấn, nó tìm `k=40` chunk liên quan.
-    3.  Nó dùng `CohereRerank` để sắp xếp lại và chỉ lấy `top_n=6` chunk chính xác nhất.
+Hệ thống RAG sử dụng một **bộ định tuyến (Router)** để xác định nguồn tri thức phù hợp cho mỗi truy vấn.
 
-### 2. Dynamic Retriever (Kho tri thức động)
+### 1. Global Retriever – Kho tri thức chung
 
--   **Mục tiêu:** Trả lời các câu hỏi về file PDF mà người dùng vừa tải lên.
--   **Thành phần:** Hàm `get_file_retriever(session_id)`.
--   **Cách hoạt động:**
-    1.  Khi người dùng tải file, hàm `process_and_vectorize_pdf` sẽ xử lý và lưu vector vào collection `temp_docs_cusc`.
-    2.  **Quan trọng:** Mỗi vector được gắn metadata `{"session_id": "..."}`.
-    3.  Hàm `get_file_retriever` tạo ra một retriever chỉ tìm kiếm trong `temp_docs_cusc` VÀ **lọc (filter)** theo `session_id` của người dùng hiện tại.
+- **Mục tiêu:** Giải đáp các câu hỏi tổng quát liên quan đến quy trình hoặc thông tin nội bộ của CUSC.  
+- **Thành phần:** `GLOBAL_RETRIEVER`.  
+- **Cách hoạt động:**
+  1. Dữ liệu được nạp một lần thông qua `agents.py` → `create_database.py` vào collection `docs_cusc` trong ChromaDB.  
+  2. Khi nhận truy vấn, hệ thống tìm `k=40` đoạn văn bản liên quan.  
+  3. Sau đó sử dụng **Cohere Rerank** để sắp xếp và chọn ra `top_n=6` kết quả chính xác nhất.
 
-### 3. RAG Router (Bộ định tuyến)
+### 2. Dynamic Retriever – Kho tri thức động
 
--   **Thành phần:** `RAG_CHAIN_WITH_HISTORY`.
--   **Cách hoạt động:**
-    1.  Khi nhận câu hỏi, nó hỏi LLM (Gemini) một câu hỏi phân loại (sử dụng `ROUTER_PROMPT_TEMPLATE`).
-    2.  Nó kiểm tra xem session này có file không (`check_session_has_files`).
-    3.  Dựa trên câu trả lời, nó sẽ "lái" câu hỏi của người dùng đến 1 trong 3 chain:
-        -   `file_rag_query` (Nếu hỏi về file): Dùng **Dynamic Retriever**.
-        -   `rag_query` (Nếu hỏi chung): Dùng **Global Retriever**.
-        -   `history_query` (Nếu hỏi lịch sử): Chỉ dùng bộ nhớ.
+- **Mục tiêu:** Giải đáp các câu hỏi liên quan đến tệp PDF do người dùng tải lên.  
+- **Thành phần:** Hàm `get_file_retriever(session_id)`.  
+- **Cách hoạt động:**
+  1. Khi người dùng tải tệp, hàm `process_and_vectorize_pdf` xử lý nội dung và lưu vector vào collection `temp_docs_cusc`.  
+  2. Mỗi vector được gắn metadata `{"session_id": "..."}`.  
+  3. Hàm `get_file_retriever` chỉ tìm kiếm trong `temp_docs_cusc`, đồng thời lọc kết quả theo `session_id` hiện tại.
 
-## 📄 Quy trình Xử lý PDF (Trích xuất Nâng cao - LlamaParse)
+### 3. RAG Router – Bộ định tuyến truy vấn
 
-Hệ thống này sử dụng **LlamaParse** để trích xuất văn bản và cấu trúc (như bảng) từ file PDF. Quy trình này được gọi bởi `BackgroundTasks` trong API backend.
+- **Thành phần:** `RAG_CHAIN_WITH_HISTORY`.  
+- **Cách hoạt động:**
+  1. Khi nhận câu hỏi, hệ thống yêu cầu mô hình ngôn ngữ (Gemini) phân loại loại truy vấn bằng prompt `ROUTER_PROMPT_TEMPLATE`.  
+  2. Kiểm tra xem phiên hiện tại có tệp PDF đã tải lên hay không (`check_session_has_files`).  
+  3. Dựa trên kết quả phân loại, truy vấn sẽ được định tuyến đến một trong ba chain:
+     - `file_rag_query`: Nếu truy vấn liên quan đến tệp PDF.  
+     - `rag_query`: Nếu truy vấn mang tính tổng quát.  
+     - `history_query`: Nếu truy vấn liên quan đến lịch sử trò chuyện.
 
-Hàm `process_and_vectorize_pdf` thực hiện:
+---
 
-1.  **Load (Tải):** Dùng `LlamaParse` với chế độ agent (`parse_page_with_agent`) và model (`config.LLAMA_PARSE_MODEL`) để gọi API bên ngoài, trích xuất PDF thành Markdown.
-2.  **Fix (Sửa):** Áp dụng hàm `fix_first_roman_headings` để chuẩn hóa các tiêu đề La Mã (I, II, III...) về cấp `<h1>`.
-3.  **Split (Tách):** Sử dụng chiến lược "hybrid-split":
-    * Tách lần 1 (Cấu trúc): Dùng `MarkdownHeaderTextSplitter` để tách file theo các heading `#`, `##`.
-    * Tách lần 2 (Ngữ nghĩa): Dùng `SemanticChunker` để tách các khối text lớn (giữa các heading) thành các chunk nhỏ hơn về mặt ngữ nghĩa.
-4.  **Embed & Store (Nhúng & Lưu):** Nhúng (embed) các chunk và lưu vào ChromaDB (collection `temp_docs_cusc`) với `session_id`.
-5.  **Update Status:** Cập nhật trạng thái (`processing`, `processed`, `error_parsing`...) vào collection `documents` của MongoDB.
+## 📄 Quy trình Xử lý PDF (LlamaParse)
 
-## 🚀 Hướng dẫn: Xây dựng Kho tri thức (Lần đầu)
+Hệ thống sử dụng **LlamaParse** để trích xuất nội dung và cấu trúc (bao gồm bảng biểu) từ tệp PDF.  
+Quy trình được thực thi thông qua `BackgroundTasks` trong backend.
 
-Để chatbot có thể trả lời các câu hỏi chung (Global RAG), bạn phải nạp dữ liệu cho nó 1 lần.
+Hàm `process_and_vectorize_pdf` bao gồm các bước:
 
-1.  **Cài đặt Dependencies:**
-    ```bash
-    # (Đã kích hoạt .venv từ thư mục gốc)
-    pip install -r requirements.txt
-    ```
-2.  **Chuẩn bị Dữ liệu:**
-    * Đặt tất cả các file PDF (ví dụ 7 file `TT07...pdf`) vào thư mục `data/`.
+1. **Load:** Sử dụng `LlamaParse` (chế độ agent, model `config.LLAMA_PARSE_MODEL`) để trích xuất tệp PDF thành Markdown.  
+2. **Fix:** Chuẩn hóa tiêu đề La Mã (I, II, III...) bằng hàm `fix_first_roman_headings`.  
+3. **Split:** Thực hiện tách dữ liệu theo chiến lược "hybrid-split":  
+   - Tách cấu trúc: Dựa trên `MarkdownHeaderTextSplitter` (các heading `#`, `##`).  
+   - Tách ngữ nghĩa: Dựa trên `SemanticChunker` để phân chia đoạn văn theo ý nghĩa.  
+4. **Embed & Store:** Nhúng (embed) các đoạn đã tách và lưu vào ChromaDB (`temp_docs_cusc`) cùng `session_id`.  
+5. **Update Status:** Cập nhật trạng thái xử lý (`processing`, `processed`, `error_parsing`, ...) vào collection `documents` của MongoDB.
 
-3.  **Khởi động ChromaDB Server:**
-    * (Bắt buộc) Mở một terminal và chạy (giữ cho nó chạy):
-    ```bash
-    chroma run --host 127.0.0.1 --port 8001 --path "./chatbot/vectorstores/chroma_db_2"
-    ```
+---
 
-4.  **Chạy Script Nạp Dữ liệu:**
-    * Mở một terminal **khác** (đã kích hoạt `.venv`).
-    * Chạy script `agents.py`. Script này sẽ (1) gọi LlamaParse để xử lý file PDF trong `data/` và (2) nạp vector vào ChromaDB.
-    ```bash
-    python agents.py
-    ```
+## 🚀 Hướng dẫn Xây dựng Kho Tri thức (Lần đầu)
 
-## ⌨️ Chạy Chatbot (Chế độ CLI)
+Để chatbot có thể trả lời các truy vấn chung, cần khởi tạo dữ liệu nền cho RAG.
 
-Để kiểm tra nhanh logic RAG mà không cần chạy Backend/Frontend, bạn có thể dùng file `query_rag.py` như một script:
+1. **Cài đặt phụ thuộc:**
+   ```bash
+   # (Đã kích hoạt môi trường ảo .venv)
+   pip install -r requirements.txt
+   ```
+2. **Chuẩn bị dữ liệu:**
+   - Đặt tất cả tệp PDF (ví dụ: `TT07_*.pdf`) vào thư mục `data/`.
+3. **Khởi động ChromaDB Server:**
+   ```bash
+   chroma run --host 127.0.0.1 --port 8001 --path "./chatbot/vectorstores/chroma_db_2"
+   ```
+4. **Nạp dữ liệu vào ChromaDB:**
+   ```bash
+   python agents.py
+   ```
 
-1.  (Đảm bảo ChromaDB Server đang chạy).
-2.  (Đảm bảo bạn đã chạy `agents.py` ít nhất 1 lần).
-3.  Chạy lệnh:
-    ```bash
-    python chatbot/query_rag.py
-    ```
-4.  Làm theo hướng dẫn trên terminal để tạo session mới và bắt đầu chat.
+---
+
+## ⌨️ Chạy Chatbot ở Chế độ CLI
+
+Để kiểm thử nhanh logic RAG mà không cần khởi động toàn bộ hệ thống:
+
+1. Đảm bảo ChromaDB Server đang chạy.  
+2. Đảm bảo dữ liệu nền đã được nạp bằng `agents.py`.  
+3. Thực thi lệnh:
+   ```bash
+   python chatbot/query_rag.py
+   ```
+4. Làm theo hướng dẫn trên terminal để tạo session và bắt đầu trò chuyện.
+
