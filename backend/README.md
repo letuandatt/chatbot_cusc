@@ -70,13 +70,13 @@ source .venv/bin/activate  # (Linux/Mac)
 2.  Đảm bảo các biến sau được thiết lập:
     ```ini
     # Dùng cho RAG (chatbot/query_rag.py)
-    GOOGLE_API_KEY="AIzaSy..."
-    COHERE_API_KEY="your_cohere_key"
-    LLAMA_CLOUD_API_KEY="llm_..." # (Mặc dù PyMuPDF thay thế LlamaParse, config này có thể vẫn được dùng)
+    GOOGLE_API_KEY=
+    COHERE_API_KEY=
+    LLAMA_CLOUD_API_KEY=
 
     # Dùng cho MongoDB (chatbot/query_rag.py)
-    MONGO_URI="mongodb://localhost:27017/"
-    MONGO_DB_NAME="Chatbot_CUSC"
+    MONGO_URI=
+    MONGO_DB_NAME=
 
     # Dùng cho JWT (chatbot/auth_utils.py)
     SECRET_KEY="your_super_secret_key_for_jwt"
