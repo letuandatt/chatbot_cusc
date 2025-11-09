@@ -7,6 +7,8 @@ import functools
 import pytz
 import hashlib
 import chromadb
+import redis
+import pickle
 
 from chatbot import config
 from chatbot.extract_data import fix_first_roman_headings
@@ -63,6 +65,20 @@ except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
     DB_COLLECTION = None
     FS = None
+
+try:
+    _redis_client = redis.Redis(
+        host='localhost',
+        port=6379,
+        db=0,
+        decode_responses=False
+    )
+    _redis_client.ping()
+    print("Redis ping successful.")
+except Exception as ex:
+    print(f"Failed to connect to Redis: {ex}")
+    _redis_client = None
+
 
 def get_mongo_collection(collection_name: str = "sessions"):
     """Trả về collection 'sessions' đã được khởi tạo."""
@@ -639,13 +655,27 @@ def image_to_base64(image_path, max_size_px=1024, jpeg_quality=85):
 
 
 # Lưu 128 kết quả truy vấn gần nhất
-@functools.lru_cache(maxsize=128)
 def get_retrieved_docs(query: str):
     """
     Hàm này lấy tài liệu đã được Rerank.
     Nó được cache lại để tăng hiệu suất.
     Nó được bọc try/except để đảm bảo ổn định.
     """
+    cache_key = f"rag_key:{query}"
+
+    if _redis_client is None:
+        try:
+            cached_data = _redis_client.get(cache_key)
+            if cached_data is not None:
+                print(f"--- (Cache: HIT key '{cache_key}') ---")
+
+                retrieved_docs = pickle.loads(cached_data)
+                return retrieved_docs
+        except Exception as exc:
+            print(f"Lỗi khi đọc Redis cache: {exc}")
+
+    print(f"--- (Cache: MISS key '{cache_key}') ---")
+
     retriever = GLOBAL_RETRIEVER
     if retriever is None:
         print("Lỗi: GLOBAL_RETRIEVER chưa được khởi tạo.")
@@ -653,15 +683,26 @@ def get_retrieved_docs(query: str):
 
     try:
         retrieved_docs = retriever.invoke(query)
-        return retrieved_docs
-    except Exception as e:
-        print(f"Failed to retrieve docs for query: {query}, error: {e}")
+    except Exception as exc:
+        print(f"Failed to retrieve docs for query: {query}, error: {exc}")
         return []
+
+    if _redis_client is not None and retrieved_docs is not None:
+        try:
+            serialized_docs = pickle.dumps(retrieved_docs)
+            _redis_client.set(
+                cache_key,
+                serialized_docs,
+                ex=config.CACHE_EXPIRE_SECONDS
+            )
+        except Exception as exc:
+            print(f"Lỗi khi lưu Redis cache: {exc}")
+
+    return retrieved_docs
 
 
 def format_docs(docs):
     """Format tài liệu cho prompt."""
-    # ... (Hàm này đã tối ưu, giữ nguyên) ...
     return "\n\n".join([
         f"Chunk: {doc.page_content}\n"
         f"Metadata: (Văn bản: {doc.metadata.get('ten_van_ban', 'N/A')}, "
@@ -843,14 +884,35 @@ def create_rag_router_chain(llm):
         if "file_rag_query" in classification and has_files:
             print(f"--- (Router: File RAG session {session_id}) ---")
 
-            # Tạo chain File RAG động (dynamic)
-            # bằng cách gọi hàm get_file_retriever với session_id
-
-            @functools.lru_cache(maxsize=1)
             def get_cached_file_docs(query):
                 # cache 1 lần gọi cho mỗi câu hỏi
+                cache_key = f"file_rag_query_{session_id}: {query}"
+
+                if _redis_client is not None:
+                    try:
+                        cached_data = _redis_client.get(cache_key)
+                        if cached_data is not None:
+                            print(f"--- (File Cache: HIT key '{cache_key}') ---")
+                            return pickle.loads(cached_data)
+                    except Exception as exc:
+                        print(f"Lỗi đọc File Cache Redis: {exc}")
+
+                print(f"--- (File Cache: MISS key '{cache_key}') ---")
+
                 retriever = get_file_retriever(session_id)
-                return retriever.invoke(query)
+                docs = retriever.invoke(query)
+
+                if _redis_client is not None and docs is not None:
+                    try:
+                        _redis_client.set(
+                            cache_key,
+                            pickle.dumps(docs),
+                            ex=config.CACHE_EXPIRE_SECONDS
+                        )
+                    except Exception as exc:
+                        print(f"Lỗi khi file cache redis: {exc}")
+
+                return docs
 
             file_rag_chain = (
                     {"context": lambda x: format_docs(get_cached_file_docs(x["question"])),
@@ -946,7 +1008,7 @@ def create_vision_chain(llm):
         # 5. Trả về HumanMessage (gồm Text + Ảnh)
         return [HumanMessage(content=[{"type": "text", "text": prompt_text}, image_data])]
 
-    # Hàm này dùng để lưu lại lịch sử (giữ nguyên)
+    # Hàm này dùng để lưu lại lịch sử
     def _format_history_input(input_dict):
         question = input_dict["question"]
         img_path = input_dict["image_path"]
