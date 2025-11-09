@@ -1,6 +1,16 @@
 <template>
   <div class="chat">
     <div class="header">
+
+      <button
+        v-if="isSidebarCollapsed"
+        class="sidebar-toggle-show"
+        @click="$emit('toggle-sidebar')"
+        title="Mở menu"
+      >
+        »
+      </button>
+
       <div>
         <div class="header-title">
             <img src="../assets/20181031cusc.png" alt="Logo" class="header-logo">
@@ -10,8 +20,7 @@
           </div>
       </div>
       <div class="header-controls">
-<!--            <div class="meta" v-if="sessionId">Session: {{ sessionIdShort }}</div>-->
-            <router-link to="/profile" class="profile-button" title="Thông tin tài khoản">
+<router-link to="/profile" class="profile-button" title="Thông tin tài khoản">
               👤
             </router-link>
             <router-link to="/files" class="profile-button">📁</router-link>
@@ -68,8 +77,13 @@ import { useAuthStore } from "../stores/auth.js";
 export default {
   name: 'ChatWindow',
   components: { MessageBubble },
-  props: { initialSessionId: { type: String, default: null } },
-  emits: ['deselect-session'],
+  // THÊM: prop 'isSidebarCollapsed'
+  props: {
+    initialSessionId: { type: String, default: null },
+    isSidebarCollapsed: { type: Boolean, default: false }
+  },
+  // THÊM: emit 'toggle-sidebar'
+  emits: ['deselect-session', 'toggle-sidebar'],
   data(){ return {
     sessionId: this.initialSessionId || localStorage.getItem('current_session') || null,
     messages: [],
@@ -526,5 +540,27 @@ label.file-label[for="file-input"]:has(+ input[type="file"]:disabled) {
     background-color: #374151;
     color: var(--text-primary);
     border-color: var(--border-color);
+}
+
+/* --- THÊM MỚI STYLE CHO NÚT MỞ (MENU) --- */
+.sidebar-toggle-show {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1.5rem; /* Cỡ icon */
+    padding: 8px;
+    margin-right: 10px; /* Khoảng cách với logo */
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+.sidebar-toggle-show:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
 }
 </style>

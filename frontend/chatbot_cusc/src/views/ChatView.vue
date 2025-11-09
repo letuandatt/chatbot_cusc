@@ -1,15 +1,21 @@
 <template>
   <div class="app">
     <SessionList
+        v-if="!isSidebarCollapsed"
         :current="currentSession"
         @select="onSelectSession"
         @created="onCreated"
-        @refresh="refresh"
         @deleteAll="onDeleteAll"
-        @logout="handleLogout"/>
+        @logout="handleLogout"
+        @toggle="toggleSidebar"
+    />
+
     <ChatWindow
         :initialSessionId="currentSession"
-        @deselect-session="onDeselectSession"/>
+        :is-sidebar-collapsed="isSidebarCollapsed"
+        @deselect-session="onDeselectSession"
+        @toggle-sidebar="toggleSidebar"
+    />
   </div>
 </template>
 
@@ -21,7 +27,13 @@ import { useAuthStore } from "../stores/auth.js";
 export default {
   name: "ChatView",
   components: { SessionList, ChatWindow },
-  data(){ return { currentSession: localStorage.getItem('current_session') || null } },
+  data(){
+    return {
+      currentSession: localStorage.getItem('current_session') || null,
+      // Thêm state để quản lý việc thu gọn, đọc từ localStorage
+      isSidebarCollapsed: JSON.parse(localStorage.getItem('sidebar_collapsed') || 'false')
+    }
+  },
   methods:{
     onSelectSession(id){
       this.currentSession = id
@@ -48,13 +60,17 @@ export default {
       console.log("App: Deselecting session");
       this.currentSession = null; // Xóa session hiện tại trong data
       localStorage.removeItem('current_session'); // Xóa khỏi localStorage
-      // :key="currentSession" sẽ tự động re-render ChatWindow về trạng thái chào mừng
     },
     handleLogout(){
       if (confirm("Are u sure you want to logout?")) {
         const authStore = useAuthStore();
         authStore.logout();
       }
+    },
+    // Thêm hàm này: Bật/tắt thanh bên và lưu vào localStorage
+    toggleSidebar() {
+      this.isSidebarCollapsed = !this.isSidebarCollapsed;
+      localStorage.setItem('sidebar_collapsed', JSON.stringify(this.isSidebarCollapsed));
     }
   }
 }

@@ -2,9 +2,11 @@
   <div class="sessions">
     <div class="sidebar-header">
       <div class="btn-group">
+
         <button class="btn" @click="createNew" title="Tạo mới">+ Tạo mới</button>
         <button class="btn ghost danger" @click="confirmDeleteAll" title="Xóa tất cả">🗑️ Xóa tất cả</button>
-        <button class="btn ghost" @click="$emit('refresh')" title="Tải lại" style="margin-left: auto;">🔄</button>
+
+        <button class="btn ghost toggle-btn" @click="$emit('toggle')" title="Thu gọn">«</button>
       </div>
     </div>
 
@@ -48,7 +50,8 @@ export default {
   name: 'SessionList',
   props: { current: String },
   data(){ return { sessions: [], loading:false } },
-  emits: ['select','refresh','created', 'deletedAll', 'logout'],
+  // THÊM 'toggle' VÀO EMITS
+  emits: ['select','refresh','created', 'deletedAll', 'logout', 'toggle'],
   methods:{
     async fetch(){
       this.loading = true
@@ -388,5 +391,21 @@ export default {
 .delete-account-btn.btn.ghost {
     background: transparent;
     box-shadow: none;
+}
+
+/* --- THÊM MỚI STYLE CHO NÚT TOGGLE VÀ HEADER --- */
+.sidebar-header .btn-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.sidebar-header .btn {
+   flex-grow: 0; /* Ngăn nút bị giãn */
+}
+.toggle-btn {
+  font-size: 1.5rem;
+  padding: 0px 10px;
+  font-weight: bold;
+  min-width: 40px;
 }
 </style>
