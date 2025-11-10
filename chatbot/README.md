@@ -23,11 +23,13 @@ Hệ thống RAG sử dụng một **bộ định tuyến (Router)** để xác 
 ### 1. Global Retriever – Kho tri thức chung
 
 - **Mục tiêu:** Giải đáp các câu hỏi tổng quát liên quan đến quy trình hoặc thông tin nội bộ của CUSC.  
-- **Thành phần:** `GLOBAL_RETRIEVER`.  
+- **Thành phần:** `GLOBAL_RETRIEVER` (được bọc trong get_retrieved_docs).  
 - **Cách hoạt động:**
   1. Dữ liệu được nạp một lần thông qua `agents.py` → `create_database.py` vào collection `docs_cusc` trong ChromaDB.  
-  2. Khi nhận truy vấn, hệ thống tìm `k=40` đoạn văn bản liên quan.  
-  3. Sau đó sử dụng **Cohere Rerank** để sắp xếp và chọn ra `top_n=6` kết quả chính xác nhất.
+  2. Khi một truy vấn được gửi đến get_retrieved_docs, hệ thống đầu tiên sẽ kiểm tra Redis Cache.
+  3. Hệ thống tìm `k=40` đoạn văn bản liên quan.  
+  4. Sau đó sử dụng **Cohere Rerank** để sắp xếp và chọn ra `top_n=6` kết quả chính xác nhất.
+  5. Kết quả top_n=6 này được lưu vào Redis (với CACHE_EXPIRATION_SECONDS) để sử dụng cho các lần truy vấn tương tự trong tương lai.
 
 ### 2. Dynamic Retriever – Kho tri thức động
 
@@ -72,18 +74,31 @@ Hàm `process_and_vectorize_pdf` bao gồm các bước:
 
 Để chatbot có thể trả lời các truy vấn chung, cần khởi tạo dữ liệu nền cho RAG.
 
-1. **Cài đặt phụ thuộc:**
+1. **Yêu cầu hệ thống:**
+   - MongoDB Server (phải đang chạy để query_rag.py kết nối).
+   - Redis server (phải đang chạy để query_rag.py kết nối cache)
+
+2. **Cài đặt phụ thuộc:**
    ```bash
    # (Đã kích hoạt môi trường ảo .venv)
    pip install -r requirements.txt
    ```
-2. **Chuẩn bị dữ liệu:**
+3. **Chuẩn bị dữ liệu:**
    - Đặt tất cả tệp PDF (ví dụ: `TT07_*.pdf`) vào thư mục `data/`.
-3. **Khởi động ChromaDB Server:**
+4. **Khởi động các dịch vụ nền:**
+   - (Mở Terminal 1) Khởi động Redis Server: (Cách 1: Dùng Docker - khuyến nghị)
+   ```bash
+   docker run -d --name my-redis-cache -p 6379:6379 redis:latest
+   ```
+   (Cách 2: Cài đặt trực tiếp)
+   ```bash
+   redis-server
+   ```
+   - (Mở Terminal 2) Khởi động ChromaDB server:
    ```bash
    chroma run --host 127.0.0.1 --port 8001 --path "./chatbot/vectorstores/chroma_db_2"
    ```
-4. **Nạp dữ liệu vào ChromaDB:**
+5. **Nạp dữ liệu vào ChromaDB:**
    ```bash
    python agents.py
    ```
