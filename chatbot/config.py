@@ -7,7 +7,6 @@ current_dir = Path(__file__).parent.resolve().parent
 env_path = current_dir / ".env"
 
 load_dotenv(dotenv_path=env_path, verbose=True)
-print(f"Attempting to load .env from: {env_path}")
 
 # --- API KEYS ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -23,7 +22,6 @@ LLAMA_PARSE_MODEL = "anthropic-sonnet-4.5"
 
 # --- DATABASE ---
 VECTORSTORE_PATH = str(current_dir / "chatbot"/ "vectorstores" / "chroma_db_2")
-print(f"Using absolute VECTORSTORE_PATH: {VECTORSTORE_PATH}")
 COLLECTION_NAME = "docs_cusc"
 TEMP_COLLECTION_NAME = "temp_docs_cusc"
 
