@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from chatbot.auth_utils import get_current_user_id
 from chatbot.query_rag import (
     check_session_belongs_to_user,
-    RAG_CHAIN_WITH_HISTORY,
+    RAG_AGENT_EXECUTOR,
     VISION_CHAIN_WITH_HISTORY,
     save_session_message,
     save_pdf_to_mongo,
@@ -37,24 +37,37 @@ async def chat_text(question: str = Form(...), session_id: str = Form(...),
     if not check_session_belongs_to_user(session_id, current_user_id):
         raise HTTPException(status_code=403, detail="Access forbidden: Session does not belong to user")
 
-    chain_to_run = RAG_CHAIN_WITH_HISTORY
+    chain_to_run = RAG_AGENT_EXECUTOR
     if chain_to_run is None:
         raise HTTPException(status_code=503, detail="RAG system is not available")
 
     async def stream_response():
-        """Tạo generator để stream từng chunk câu trả lời."""
+        """
+        Tạo generator để stream câu trả lời.
+        Lưu ý: AgentExecutor không stream token-by-token. Nó trả về kết quả cuối cùng.
+        Chúng ta sẽ 'stream' kết quả cuối cùng đó về client.
+        """
         full_response = ""
         config_ = {"configurable": {"session_id": session_id, "user_id": current_user_id}}
         input_data = {"question": question}
 
         try:
-            for chunk in chain_to_run.stream(input_data, config=config_):
-                full_response += chunk
-                yield chunk
+            # SỬA LỖI: Dùng ainvoke() thay vì stream()
+            # AgentExecutor trả về một dict, không phải stream các token.
+            result = await chain_to_run.ainvoke(input_data, config=config_)
+
+            # Lấy output từ dict kết quả
+            full_response = result.get("output", "Lỗi: Không có phản hồi từ Agent.")
+
+            # 'Stream' câu trả lời đầy đủ này về client
+            yield full_response
+
         except Exception as ex:
             traceback.print_exc()
-            yield f"\n\n--- Lỗi Server ---:\n{str(ex)}"
+            full_response = f"\n\n--- Lỗi Server ---:\n{str(ex)}"
+            yield full_response
         finally:
+            # Lưu message vào DB sau khi đã có full_response
             if question and full_response:
                 save_session_message(session_id, current_user_id, question, full_response)
 
