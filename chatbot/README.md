@@ -7,7 +7,7 @@ Nó **không phải là một máy chủ độc lập**, mà là một **thư vi
 
 ## 🏛️ Cấu trúc Thành phần
 
-- **`query_rag.py`** – Thành phần trung tâm, chứa toàn bộ logic RAG, các chuỗi xử lý (chain) và hàm xử lý tệp.
+- **`query_rag.py`** – Thành phần trung tâm, chứa toàn bộ logic RAG, kiến trúc Agent và các hàm xử lý tệp.
 - **`agents.py`** – Tập lệnh điều phối quá trình xử lý và nạp dữ liệu PDF (`extract_data.py`) vào ChromaDB (`create_database.py`).
 - **`create_database.py`** – Triển khai hàm `create_data` phục vụ việc nạp dữ liệu tri thức chung (Global) vào ChromaDB.
 - **`extract_data.py`** – Bao gồm các hàm `llama_parse_md` và `fix_first_roman_headings` để trích xuất và chuẩn hóa văn bản.
@@ -16,40 +16,38 @@ Nó **không phải là một máy chủ độc lập**, mà là một **thư vi
 
 ---
 
-## ✨ Logic RAG Cốt lõi (`query_rag.py`)
+## ✨ Logic RAG Cốt lõi (`query_rag.py`) - Kiến trúc Agent
 
-Hệ thống RAG sử dụng một **bộ định tuyến (Router)** để xác định nguồn tri thức phù hợp cho mỗi truy vấn.
+Hệ thống RAG sử dụng kiến trúc sang Agent (tác tử). Agent có khả năng tự suy luận (reasoning) và chọn công cụ (tool calling) phù hợp dựa trên hướng dẫn.
+Hệ thống Agent sử dụng các công cụ sau:
 
-### 1. Global Retriever – Kho tri thức chung
+### 1. Tool: tool_search_general_policy (Kho tri thức chung)
 
-- **Mục tiêu:** Giải đáp các câu hỏi tổng quát liên quan đến quy trình hoặc thông tin nội bộ của CUSC.  
-- **Thành phần:** `GLOBAL_RETRIEVER` (được bọc trong get_retrieved_docs).  
+- **Mục tiêu:** Giải đáp các câu hỏi tổng quát liên quan đến quy trình hoặc thông tin nội bộ của CUSC.
 - **Cách hoạt động:**
-  1. Dữ liệu được nạp một lần thông qua `agents.py` → `create_database.py` vào collection `docs_cusc` trong ChromaDB.  
-  2. Khi một truy vấn được gửi đến get_retrieved_docs, hệ thống đầu tiên sẽ kiểm tra Redis Cache.
-  3. Hệ thống tìm `k=40` đoạn văn bản liên quan.  
-  4. Sau đó sử dụng **Cohere Rerank** để sắp xếp và chọn ra `top_n=6` kết quả chính xác nhất.
-  5. Kết quả top_n=6 này được lưu vào Redis (với CACHE_EXPIRATION_SECONDS) để sử dụng cho các lần truy vấn tương tự trong tương lai.
+  1. Tool này được Agent gọi khi câu hỏi liên quan đến quy trình chung  
+  2. Nó thực thi logic của GLOBAL_RETRIEVER (được bọc trong get_retrieved_docs).
+  3. Logic này bao gồm tìm kiếm k=40 tài liệu, sau đó dùng Cohere Rerank để chọn top_n=6 và sử dụng Redis Cache để tăng tốc.
 
-### 2. Dynamic Retriever – Kho tri thức động
+### 2. Tool: tool_search_uploaded_file (Kho tri thức động)
 
-- **Mục tiêu:** Giải đáp các câu hỏi liên quan đến tệp PDF do người dùng tải lên.  
-- **Thành phần:** Hàm `get_file_retriever(session_id)`.  
+- **Mục tiêu:** Giải đáp các câu hỏi liên quan đến tệp PDF do người dùng tải lên.
 - **Cách hoạt động:**
-  1. Khi người dùng tải tệp, hàm `process_and_vectorize_pdf` xử lý nội dung và lưu vector vào collection `temp_docs_cusc`.  
-  2. Mỗi vector được gắn metadata `{"session_id": "..."}`.  
-  3. Hàm `get_file_retriever` chỉ tìm kiếm trong `temp_docs_cusc`, đồng thời lọc kết quả theo `session_id` hiện tại.
+  1. Tool này được Agent gọi khi câu hỏi nhắc đến "file" hoặc "tài liệu vừa gửi".  
+  2. Nó yêu cầu tham số session_id để đảm bảo bảo mật dữ liệu.  
+  3. Nó sử dụng hàm get_file_retriever(session_id) để tìm kiếm vector trong collection temp_docs_cusc và lọc theo đúng session_id của người dùng.
 
-### 3. RAG Router – Bộ định tuyến truy vấn
+### 3. Agent Executor – Bộ điều phối Tác tử
 
-- **Thành phần:** `RAG_CHAIN_WITH_HISTORY`.  
+- **Thành phần:** `RAG_AGENT_EXECUTOR`.  
 - **Cách hoạt động:**
-  1. Khi nhận câu hỏi, hệ thống yêu cầu mô hình ngôn ngữ (Gemini) phân loại loại truy vấn bằng prompt `ROUTER_PROMPT_TEMPLATE`.  
-  2. Kiểm tra xem phiên hiện tại có tệp PDF đã tải lên hay không (`check_session_has_files`).  
-  3. Dựa trên kết quả phân loại, truy vấn sẽ được định tuyến đến một trong ba chain:
-     - `file_rag_query`: Nếu truy vấn liên quan đến tệp PDF.  
-     - `rag_query`: Nếu truy vấn mang tính tổng quát.  
-     - `history_query`: Nếu truy vấn liên quan đến lịch sử trò chuyện.
+  1. Khi nhận câu hỏi, hàm _prepare_agent_input sẽ "tiêm" session_id vào câu hỏi (dưới dạng [Ghi chú Hệ thống: session_id là: ...]) và giữ nguyên chat_history.  
+  2. AgentExecutor nhận input đã xử lý và lịch sử trò chuyện.  
+  3. Dựa trên AGENT_SYSTEM_PROMPT, Agent tự suy luận xem có cần gọi tool hay không.
+  4. Nếu là câu hỏi về file, Agent sẽ gọi tool_search_uploaded_file và phải truyền session_id (lấy từ Ghi chú Hệ thống trong prompt).
+  5. Nếu là câu hỏi chung, Agent gọi tool_search_general_policy.
+  6. Nếu là chào hỏi, Agent tự trả lời mà không dùng tool.
+  7. Cuối cùng, Agent tổng hợp kết quả từ tool (nếu có) để trả lời người dùng.
 
 ---
 
