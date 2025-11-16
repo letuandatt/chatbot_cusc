@@ -18,7 +18,7 @@ Nó **không phải là một máy chủ độc lập**, mà là một **thư vi
 
 ## ✨ Logic RAG Cốt lõi (`query_rag.py`) - Kiến trúc Agent
 
-Hệ thống RAG sử dụng kiến trúc sang Agent (tác tử). Agent có khả năng tự suy luận (reasoning) và chọn công cụ (tool calling) phù hợp dựa trên hướng dẫn.
+Hệ thống RAG sử dụng kiến trúc Agent (tác tử). Agent có khả năng tự suy luận (reasoning) và chọn công cụ (tool calling) phù hợp dựa trên hướng dẫn.
 Hệ thống Agent sử dụng các công cụ sau:
 
 ### 1. Tool: tool_search_general_policy (Kho tri thức chung)
