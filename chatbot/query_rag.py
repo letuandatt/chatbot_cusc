@@ -18,22 +18,26 @@ from pymongo import MongoClient, ASCENDING, DESCENDING
 from bson.objectid import ObjectId
 from PIL import Image
 
+# --- LANGCHAIN IMPORTS ---
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough, ConfigurableFieldSpec
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough, ConfigurableFieldSpec, RunnableConfig
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+
+# --- AGENT IMPORTS ---
+from langchain_core.tools import tool
+from langchain.agents import AgentExecutor, create_tool_calling_agent
 
 from llama_parse import LlamaParse
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 from langchain_core.documents import Document
-
 
 # ==============================================================================
 # SECTION 1: KHỞI TẠO CÁC THÀNH PHẦN TOÀN CỤC (GLOBAL COMPONENTS)
@@ -92,9 +96,11 @@ def get_mongo_collection(collection_name: str = "sessions"):
         return None
 
 
+# --- FIX LỖI INDEX TẠI ĐÂY ---
 try:
     DB_DOCUMENTS_COLLECTION = get_mongo_collection("documents")
     if DB_DOCUMENTS_COLLECTION is not None:
+        # Tạo các index cơ bản
         DB_DOCUMENTS_COLLECTION.create_index([("session_id", ASCENDING)])
         DB_DOCUMENTS_COLLECTION.create_index([("user_id", ASCENDING)])
         DB_DOCUMENTS_COLLECTION.create_index([("created_at", DESCENDING)])
@@ -152,7 +158,6 @@ except Exception as e:
     print(f"Failed to initialize RAG pipeline: {e}")
     GLOBAL_RETRIEVER = None
 
-
 # --- FILE RAG COMPONENTS ---
 try:
     # Khởi tạo Chroma instance cho collection "temp"
@@ -170,11 +175,12 @@ try:
         cohere_api_key=config.COHERE_API_KEY
     )
 
+
     def get_file_retriever(session_id: str):
         """
         Tạo một retriever đã được lọc (filter) theo session_id.
         """
-        print(f"--- DEBUG: Creating FILE retriever for session: {session_id} ---")
+        # print(f"--- DEBUG: Creating FILE retriever for session: {session_id} ---")
         # 1. Base retriever (từ collection temp, lọc theo session_id)
         file_base_retriever = DB_CHROMA_TEMP.as_retriever(
             search_kwargs={
@@ -316,10 +322,9 @@ def load_session_messages(session_id: str, user_id: str, max_history_message: in
             elif msg["role"] == "assistant":
                 history.add_message(AIMessage(content=msg["content"]))
             else:
-                print(f"⚠️ Unknown role: {msg['role']}")
+                pass
     except Exception as e:
         print(f"Lỗi khi tải session ({session_id}) từ MongoDB: {e}")
-        # Trả về history rỗng để tránh crash
         return InMemoryChatMessageHistory()
 
     return history
@@ -360,6 +365,7 @@ def list_sessions(user_id: str, limit=50):
         print(f"Lỗi khi list sessions: {e}")
         return []
 
+
 def check_session_has_files(session_id: str) -> bool:
     """Kiểm tra xem session này đã tải file PDF nào lên chưa."""
     coll = DB_DOCUMENTS_COLLECTION
@@ -378,7 +384,12 @@ def compute_file_hash(file_path: str) -> str:
         file_data = f.read()
     return hashlib.md5(file_data).hexdigest()
 
+
 def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str) -> str | None:
+    """
+    Kiểm tra hash file trước khi lưu.
+    Nếu file đã tồn tại, tái sử dụng ID cũ.
+    """
     fs_client = FS
     coll = DB_DOCUMENTS_COLLECTION
     if fs_client is None or coll is None:
@@ -387,9 +398,21 @@ def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str) -> str | No
 
     now = datetime.now(VN_TZ).isoformat()
     file_name = os.path.basename(file_path)
-    file_hash = compute_file_hash(file_path)  # ✅ thêm dòng này
+    file_hash = compute_file_hash(file_path)
 
     try:
+        # 1. Kiểm tra xem file với hash này đã tồn tại trong hệ thống chưa
+        existing_doc = coll.find_one({"file_hash": file_hash})
+
+        if existing_doc:
+            print(f"ℹ️ File '{file_name}' đã tồn tại trong hệ thống (ID: {existing_doc['gridfs_id']}). Tái sử dụng.")
+
+            # Kiểm tra xem session này đã có link tới file này chưa
+            # (Logic đơn giản: nếu DB cho phép insert duplicate file_hash thì ok, nếu không thì chỉ return ID)
+            # Ở đây ta chỉ cần ID để query là được.
+            return str(existing_doc['gridfs_id'])
+
+        # 2. Nếu chưa có, Upload file mới vào GridFS
         with open(file_path, "rb") as f:
             file_id = fs_client.put(
                 f,
@@ -402,19 +425,28 @@ def save_pdf_to_mongo(file_path: str, session_id: str, user_id: str) -> str | No
                 }
             )
 
+        # 3. Lưu metadata vào collection
         doc_record = {
             "session_id": session_id,
             "user_id": user_id,
             "filename": file_name,
             "gridfs_id": str(file_id),
-            "file_hash": file_hash,  # ✅ thêm vào đây
+            "file_hash": file_hash,
             "created_at": now,
             "status": "uploaded"
         }
         coll.insert_one(doc_record)
         print(f"Đã lưu file '{file_name}' vào GridFS (ID: {file_id}) và collection 'documents'.")
         return str(file_id)
+
     except Exception as e:
+        # Xử lý lỗi duplicate key phòng trường hợp race condition
+        if "duplicate key" in str(e) or "E11000" in str(e):
+            print("⚠️ Phát hiện file trùng lặp (Race condition). Đang lấy ID file cũ...")
+            existing_doc_retry = coll.find_one({"file_hash": file_hash})
+            if existing_doc_retry:
+                return str(existing_doc_retry['gridfs_id'])
+
         print(f"Lỗi khi lưu file PDF vào MongoDB: {e}")
         return None
 
@@ -423,7 +455,6 @@ def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
     """
     Sử dụng LlamaParse để phân tích PDF,
     split (Markdown + Semantic), và lưu vào Chroma (temp collection).
-    (Phiên bản đã sửa lỗi và đồng bộ logic)
     """
     if DB_CHROMA_TEMP is None:
         print("Lỗi: Không thể vector hóa, DB_CHROMA_TEMP chưa sẵn sàng.")
@@ -533,12 +564,6 @@ def process_and_vectorize_pdf(file_path: str, session_id: str, user_id: str):
 def delete_session_and_associated_files(session_id: str, user_id: str) -> dict:
     """
     Xóa 1 session và TẤT CẢ các file, chunks liên quan (bao gồm PDF và Ảnh).
-    1. Tìm session, lấy ID ảnh.
-    2. Tìm file PDF, lấy ID file PDF.
-    3. Xóa tất cả file (Ảnh + PDF) khỏi GridFS.
-    4. Xóa record trong 'sessions'.
-    5. Xóa records trong 'documents'.
-    6. Xóa chunks trong ChromaDB.
     """
     sessions_coll = get_mongo_collection("sessions")
     docs_coll = DB_DOCUMENTS_COLLECTION
@@ -576,8 +601,7 @@ def delete_session_and_associated_files(session_id: str, user_id: str) -> dict:
 
     except Exception as e:
         print(f"Lỗi khi tìm session doc hoặc thu thập ID ảnh: {e}")
-        # Không dừng lại, vẫn tiếp tục xóa các thứ khác
-        pass  # Chúng ta vẫn sẽ thử xóa dựa trên session_id
+        pass
 
     # --- Bước 2: Thu thập ID file PDF (từ collection 'documents') ---
     try:
@@ -712,80 +736,186 @@ def format_docs(docs):
 # --- MEMORY MANAGEMENT ---
 def get_session_history(session_id: str, user_id: str):
     """Lấy lịch sử chat TRỰC TIẾP từ MongoDB cho user cụ thể."""
-    print(f"--- DEBUG: Loading history for session '{session_id}' / user '{user_id}' from DB ---")
+    # print(f"--- DEBUG: Loading history for session '{session_id}' / user '{user_id}' from DB ---")
     return load_session_messages(session_id, user_id)
 
 
 # ==============================================================================
-# SECTION 3: CÁC HÀM TẠO CHAIN (CHAIN FACTORY FUNCTIONS)
+# SECTION 3: KHỞI TẠO AGENT & TOOLS (AGENT INFRASTRUCTURE)
 # ==============================================================================
 
+# --- TOOL DEFINITIONS ---
 
-# --- PROMPTS ---
-ROUTER_PROMPT_TEMPLATE = PromptTemplate.from_template("""
-Bạn là AI phân loại câu hỏi. Dựa trên Lịch sử trò chuyện và Câu hỏi mới,
-hãy phân loại câu hỏi vào MỘT trong ba loại sau:
+@tool
+def tool_search_general_policy(query: str):
+    """
+    Sử dụng công cụ này để tra cứu thông tin về quy trình, quy định, thủ tục,
+    chính sách nội bộ của CUSC (ví dụ: quy trình nghỉ phép, biểu mẫu, quy định lương, văn bản TT07...).
+    Đầu vào là câu hỏi hoặc từ khóa tìm kiếm liên quan đến chính sách.
+    """
+    print(f"--- [Agent Tool] Searching General Policy: {query} ---")
+    try:
+        docs = get_retrieved_docs(query)
+        if not docs:
+            return "Không tìm thấy tài liệu nào phù hợp trong cơ sở dữ liệu quy trình."
+        return format_docs(docs)
+    except Exception as e:
+        return f"Lỗi khi tra cứu quy trình: {str(e)}"
 
-1.  `rag_query`: Câu hỏi yêu cầu thông tin về quy trình, thủ tục, hoặc
-    thông tin cụ thể (ví dụ: "Quy trình nghỉ phép là gì?", "TT07.03 nói về cái gì?",
-    "thế còn nhân viên thử việc thì sao?").
 
-2.  `history_query`: Câu hỏi về chính cuộc hội thoại
-    (ví dụ: "bạn vừa nói gì?", "câu hỏi thứ 3 của tôi là gì?", "bạn có nhớ tôi không?").
+@tool
+def tool_search_uploaded_file(query: str, session_id: str):
+    """
+    Sử dụng công cụ này KHI VÀ CHỈ KHI người dùng hỏi về nội dung của 'file'
+    hoặc 'tài liệu' mà họ vừa tải lên (PDF).
+    KHÔNG sử dụng nếu người dùng hỏi quy trình chung chung mà không nhắc đến file cụ thể vừa gửi.
+    """
+    if not session_id:
+        return "Lỗi: Agent đã không cung cấp session_id khi gọi tool."
 
-3.  `file_rag_query`: Câu hỏi liên quan đến tài liệu, file (PDF) MÀ NGƯỜI DÙNG VỪA TẢI LÊN.
-(ví dụ: "Tóm tắt file tôi vừa gửi", "file đó nói gì về X?", "trong tài liệu có nhắc đến Y không?").
+    print(f"--- [Agent Tool] Searching Uploaded File (Session: {session_id}): {query} ---")
 
-Chỉ trả lời bằng MỘT từ duy nhất: `rag_query` hoặc `history_query` hoặc `file_rag_query`.
+    # Kiểm tra xem session có file không
+    if not check_session_has_files(session_id):
+        return "Người dùng chưa tải lên file nào trong phiên làm việc này. Hãy nhắc họ tải file lên trước."
 
----
-[Tình trạng file]
-{file_status}
----
-[Lịch sử trò chuyện]
-{chat_history}
----
-[Câu hỏi mới]
-{question}
----
-Phân loại (chỉ 1 từ):
-""")
+    try:
+        # 1. Cache Check (Redis) - Cache riêng cho tool file
+        cache_key = f"file_rag_tool_{session_id}:{query}"
+        if _redis_client is not None:
+            try:
+                cached = _redis_client.get(cache_key)
+                if cached:
+                    print("--- [Agent Tool] Cache HIT (File) ---")
+                    return format_docs(pickle.loads(cached))
+            except Exception:
+                pass
 
-HISTORY_PROMPT_TEMPLATE = PromptTemplate.from_template("""
-Bạn là trợ lý AI tại CUSC.
-Chỉ dựa vào LỊCH SỬ TRÒ CHUYỆN được cung cấp, hãy trả lời CÂU HỎI của người dùng.
-Không được bịa đặt thông tin.
+        # 2. Retrieval
+        retriever = get_file_retriever(session_id)
+        docs = retriever.invoke(query)
 
----
-Lịch sử trò chuyện:
-{chat_history}
----
-Câu hỏi: {question}
----
-Câu trả lời:
-""")
+        if not docs:
+            return "Không tìm thấy thông tin liên quan trong file đã tải lên."
 
-RAG_PROMPT_TEMPLATE = PromptTemplate.from_template("""
-Bạn là trợ lý AI trả lời các câu hỏi về quy trình, thủ tục nội bộ tại CUSC.
+        # 3. Cache Set
+        if _redis_client is not None:
+            try:
+                _redis_client.set(cache_key, pickle.dumps(docs), ex=config.CACHE_EXPIRE_SECONDS)
+            except Exception:
+                pass
 
-Sử dụng NGỮ CẢNH (tài liệu CUSC) được cung cấp bên dưới để trả lời CÂU HỎI.
-Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
+        return format_docs(docs)
 
-Hãy trả lời bằng tiếng Việt một cách tự nhiên, chi tiết, chính xác và định dạng đẹp, dễ đọc.
-- Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: [tên văn bản]...)").
-- Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin...".
+    except Exception as e:
+        return f"Lỗi khi tra cứu file: {str(e)}"
 
----
-Lịch sử trò chuyện:
-{chat_history}
----
-Ngữ cảnh (tài liệu CUSC):
-{context}
----
-Câu hỏi: {question}
-Câu trả lời chi tiết:
-""")
 
+# --- SYSTEM PROMPT CHO AGENT ---
+AGENT_SYSTEM_PROMPT = """
+Bạn là trợ lý AI thông minh của CUSC (Can Tho University Software Center).
+Nhiệm vụ của bạn là hỗ trợ nhân viên giải đáp thắc mắc và xử lý thông tin.
+
+Bạn có quyền truy cập vào các công cụ sau:
+1. `tool_search_general_policy`: Tra cứu quy định, quy trình chung của công ty (database chính).
+2. `tool_search_uploaded_file`: Tra cứu nội dung trong file PDF người dùng vừa tải lên.
+
+HƯỚNG DẪN XỬ LÝ:
+- **Ưu tiên ngữ cảnh:** Luôn xem xét Lịch sử trò chuyện để hiểu người dùng đang nói về cái gì.
+- **Không lạm dụng tool:** Nếu câu hỏi là chào hỏi xã giao (ví dụ: "xin chào", "bạn là ai", "cảm ơn"), hãy trả lời thân thiện mà KHÔNG cần gọi tool.
+- **Chọn tool đúng:**
+    - Nếu hỏi về quy trình/quy định (ví dụ: "quy trình nghỉ phép", "lương thử việc", "quy định đi công tác"): Dùng `tool_search_general_policy`.
+    - Nếu hỏi về file (ví dụ: "tóm tắt file này", "trong tài liệu vừa gửi có gì", "file đó nói về ai"): Dùng `tool_search_uploaded_file`.
+- **QUAN TRỌNG KHI GỌI TOOL:**
+    - Khi gọi `tool_search_uploaded_file`, bạn BẮT BUỘC phải cung cấp tham số `session_id`.
+    - `session_id` được cung cấp trong [Ghi chú Hệ thống] ở cuối câu hỏi của người dùng (ví dụ: [Ghi chú Hệ thống: session_id là: abc-123]).
+- **Trả lời:**
+    - Sau khi tool trả về kết quả, hãy tổng hợp và trả lời người dùng bằng tiếng Việt tự nhiên.
+    - Định dạng Markdown đẹp, dễ đọc (dùng bold, bullet points).
+    - **Trích dẫn nguồn:** Luôn ghi nguồn thông tin (Ví dụ: "Theo Quy định số 12..." hoặc "Theo nội dung file bạn tải lên...").
+    - Nếu không tìm thấy thông tin từ tool, hãy thành thật báo với người dùng.
+"""
+
+
+def create_agent_executor(llm):
+    """Tạo Agent Executor với khả năng Tool Calling."""
+    if llm is None:
+        print("Lỗi: Không thể tạo Agent do thiếu LLM.")
+        return None
+
+    # 1. Bind Tools vào LLM (Gemini hỗ trợ function calling)
+    tools = [tool_search_general_policy, tool_search_uploaded_file]
+
+    # 2. Tạo Prompt Template
+    # Agent Tool Calling cần prompt chat với placeholder cho messages
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", AGENT_SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input_with_session_id}"),
+        MessagesPlaceholder(variable_name="agent_scratchpad"),  # Nơi Agent suy nghĩ và gọi hàm
+    ])
+
+    # 3. Khởi tạo Agent (Tool Calling Agent)
+    agent = create_tool_calling_agent(llm, tools, prompt)
+
+    # 4. Tạo Executor
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=True,  # Bật log để xem Agent suy luận
+        handle_parsing_errors=True,  # Tự sửa lỗi parsing nếu LLM trả về JSON sai
+        max_iterations=5  # Giới hạn số lần gọi tool liên tiếp
+    )
+
+    # 5. Hàm lấy history (Wrapper)
+    def get_history_wrapper(session_id: str, user_id: str):
+        return get_session_history(session_id, user_id)
+
+    def _prepare_agent_input(input_dict, config):
+        """
+        Hàm này nhận input (gồm question và chat_history)
+        và thêm session_id vào để Agent thấy.
+        """
+        session_id = config.get("configurable", {}).get("session_id")
+
+        # Sao chép dict input (đã chứa "chat_history")
+        output_dict = input_dict.copy()
+
+        # Tạo chuỗi input mới (gồm câu hỏi + session_id)
+        input_with_session_id = (
+            f"{input_dict['question']}\n\n"
+            f"[Ghi chú Hệ thống: session_id là: {session_id}]"
+        )
+
+        # Thêm key mới vào, không ghi đè dict cũ
+        output_dict["input_with_session_id"] = input_with_session_id
+
+        # Trả về dict đầy đủ (gồm chat_history VÀ input_with_session_id)
+        return output_dict
+
+    # Bọc chain chuẩn bị input này VÀO TRƯỚC agent_executor
+    agent_chain_with_input_prep = (
+            RunnablePassthrough()  # Lấy input ({"question": ...})
+            | RunnableLambda(_prepare_agent_input)  # Biến đổi input
+            | agent_executor  # Chạy agent với input đã biến đổi
+    )
+
+    # 6. Bọc bộ nhớ (RunnableWithMessageHistory)
+    agent_with_history = RunnableWithMessageHistory(
+        agent_chain_with_input_prep,
+        get_history_wrapper,
+        input_messages_key="question",
+        history_messages_key="chat_history",
+        history_factory_config=[
+            ConfigurableFieldSpec(id="user_id", annotation=str, name="User ID"),
+            ConfigurableFieldSpec(id="session_id", annotation=str, name="Session ID"),
+        ]
+    )
+
+    return agent_with_history
+
+
+# --- VISION CHAIN FACTORY (GIỮ NGUYÊN LOGIC CŨ CHO ẢNH) ---
 VISION_PROMPT_TEMPLATE = PromptTemplate.from_template("""
 Bạn là trợ lý AI. Nhiệm vụ của bạn là trả lời CÂU HỎI của người dùng.
 Để trả lời, bạn phải sử dụng TẤT CẢ các thông tin sau:
@@ -809,149 +939,7 @@ Nếu bối cảnh không có thông tin, hãy trả lời dựa trên hình ả
 Câu trả lời chi tiết:
 """)
 
-FILE_RAG_PROMPT_TEMPLATE = PromptTemplate.from_template("""
-Bạn là trợ lý AI. Nhiệm vụ của bạn là trả lời câu hỏi của người dùng
-dựa trên NGỮ CẢNH (nội dung file PDF do người dùng tải lên).
-Sử dụng LỊCH SỬ TRÒ CHUYỆN chỉ để hiểu bối cảnh (ví dụ: "cái đó" là gì).
 
-Hãy trả lời bằng tiếng Việt, trích dẫn thông tin trực tiếp từ ngữ cảnh.
-- Luôn trích dẫn nguồn từ NGỮ CẢNH (ví dụ: "(Nguồn: {source_file})").
-- Nếu NGỮ CẢNH không có thông tin, hãy nói "Tôi không tìm thấy thông tin này trong file bạn đã tải lên.".
-
----
-Lịch sử trò chuyện:
-{chat_history}
----
-Ngữ cảnh (Nội dung file PDF):
-{context}
----
-Câu hỏi: {question}
-Câu trả lời chi tiết:
-""")
-
-
-def create_rag_router_chain(llm):
-    """Tạo chain RAG có bộ định tuyến."""
-    if llm is None :
-        print("Lỗi: Không thể tạo RAG chain do thiếu LLM hoặc Retriever.")
-        return None
-
-    def get_history_for_request(session_id: str, user_id: str):
-        return get_session_history(session_id, user_id)
-
-    # --- Định nghĩa các chain con ---
-    router_chain = ROUTER_PROMPT_TEMPLATE | llm | StrOutputParser()
-    rag_chain = (
-            {"context": lambda x: format_docs(get_retrieved_docs(x["question"])),
-             "question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}
-            | RAG_PROMPT_TEMPLATE
-            | llm
-            | StrOutputParser()
-    )
-    history_chain = (
-            {"question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}
-            | HISTORY_PROMPT_TEMPLATE
-            | llm
-            | StrOutputParser()
-    )
-
-    # --- Logic Route ---
-    def route(input_dict, config=None):
-        session_id = config["configurable"]["session_id"]
-
-        # 1. Kiểm tra tình trạng file
-        has_files = check_session_has_files(session_id)
-        file_status = "Người dùng đã tải lên 1 file." if has_files else "Người dùng CHƯA tải lên file nào."
-
-        # 2. Chạy router
-        try:
-            classification = router_chain.invoke({
-                "chat_history": input_dict.get("chat_history", []),
-                "question": input_dict["question"],
-                "file_status": file_status
-            }, config)
-        except Exception as e:
-            print(f"Lỗi khi chạy router: {e}. Mặc định dùng RAG chính.")
-            classification = "rag_query"
-
-        # 3. Trả về chain tương ứng
-        if "history_query" in classification:
-            print("--- (Router: Lịch sử) ---")
-            return history_chain
-
-        if "file_rag_query" in classification and has_files:
-            print(f"--- (Router: File RAG session {session_id}) ---")
-
-            def get_cached_file_docs(query):
-                # cache 1 lần gọi cho mỗi câu hỏi
-                cache_key = f"file_rag_query_{session_id}: {query}"
-
-                if _redis_client is not None:
-                    try:
-                        cached_data = _redis_client.get(cache_key)
-                        if cached_data is not None:
-                            print(f"--- (File Cache: HIT key '{cache_key}') ---")
-                            return pickle.loads(cached_data)
-                    except Exception as exc:
-                        print(f"Lỗi đọc File Cache Redis: {exc}")
-
-                print(f"--- (File Cache: MISS key '{cache_key}') ---")
-
-                retriever = get_file_retriever(session_id)
-                docs = retriever.invoke(query)
-
-                if _redis_client is not None and docs is not None:
-                    try:
-                        _redis_client.set(
-                            cache_key,
-                            pickle.dumps(docs),
-                            ex=config.CACHE_EXPIRE_SECONDS
-                        )
-                    except Exception as exc:
-                        print(f"Lỗi khi file cache redis: {exc}")
-
-                return docs
-
-            file_rag_chain = (
-                    {"context": lambda x: format_docs(get_cached_file_docs(x["question"])),
-                     "question": lambda x: x["question"],
-                     "chat_history": lambda x: x.get("chat_history", []),
-                     "source_file": lambda x: "File bạn đã tải lên"
-                     }
-                    | FILE_RAG_PROMPT_TEMPLATE
-                    | llm
-                    | StrOutputParser()
-            )
-            return file_rag_chain
-
-        # Mặc định (hoặc khi router chọn rag_query)
-        print("--- (Router: RAG Chính) ---")
-        return rag_chain
-
-    # --- Chain cơ sở có router ---
-    base = (
-            {"question": lambda x: x["question"],
-             "chat_history": lambda x: x.get("chat_history", [])}
-            | RunnableLambda(route)
-    )
-
-    # --- Bọc bộ nhớ ---
-    chain_with_history = RunnableWithMessageHistory(
-        base,
-        get_history_for_request,
-        input_messages_key="question",
-        history_messages_key="chat_history",
-        history_factory_config=[
-            ConfigurableFieldSpec(id="user_id", annotation=str, name="User ID"),
-            ConfigurableFieldSpec(id="session_id", annotation=str, name="Session ID"),
-        ]
-    )
-    return chain_with_history
-
-
-# --- CHAIN FACTORY: VISION ---
 def create_vision_chain(llm):
     """Tạo chain Vision RAG (kết hợp) có bộ nhớ."""
     if llm is None:
@@ -974,7 +962,7 @@ def create_vision_chain(llm):
         # A. Tra cứu file PDF (RAG Động)
         if has_files:
             try:
-                print(f"--- (Vision: Tra cứu File RAG session {session_id}) ---")
+                # print(f"--- (Vision: Tra cứu File RAG session {session_id}) ---")
                 # Dùng chính câu hỏi để tìm context trong file PDF
                 file_retriever = get_file_retriever(session_id)
                 context_docs.extend(file_retriever.invoke(question))
@@ -983,12 +971,12 @@ def create_vision_chain(llm):
 
         # B. Tra cứu DB chính (RAG Chính)
         try:
-            print("--- (Vision: Tra cứu RAG Chính) ---")
+            # print("--- (Vision: Tra cứu RAG Chính) ---")
             context_docs.extend(get_retrieved_docs(question))
         except Exception as e:
             print(f"Lỗi khi tra cứu RAG chính cho Vision: {e}")
 
-        # Dùng hàm format_docs (đã sửa)
+        # Dùng hàm format_docs
         formatted_context = format_docs(context_docs)
 
         # 3. Tạo Prompt
@@ -1021,7 +1009,6 @@ def create_vision_chain(llm):
         return get_session_history(session_id, user_id)
 
     # --- Chain cơ sở ---
-    # Thay _format_vision_message bằng _format_vision_rag_message
     base_vision = RunnablePassthrough() | RunnableLambda(_format_vision_rag_message) | llm
 
     # --- Bọc bộ nhớ ---
@@ -1043,8 +1030,8 @@ def create_vision_chain(llm):
 # SECTION 4: KHỞI TẠO CHAIN TOÀN CỤC (ĐỂ API SỬ DỤNG)
 # ==============================================================================
 
-# Gọi các hàm factory để tạo chain sẵn sàng cho API import
-RAG_CHAIN_WITH_HISTORY = create_rag_router_chain(TEXT_LLM)
+# Tạo Agent Executor thay vì Router Chain cũ
+RAG_AGENT_EXECUTOR = create_agent_executor(TEXT_LLM)
 VISION_CHAIN_WITH_HISTORY = create_vision_chain(VISION_LLM)
 
 
@@ -1053,27 +1040,29 @@ VISION_CHAIN_WITH_HISTORY = create_vision_chain(VISION_LLM)
 # ==============================================================================
 
 def handle_text_query(query_text, user_id, session_id="default_session"):
-    print("--- 🔍 Đang xử lý câu hỏi văn bản bằng RAG ---")
+    print("--- 🤖 Đang xử lý câu hỏi bằng AI Agent ---")
 
-    chain_to_run = RAG_CHAIN_WITH_HISTORY
+    agent_to_run = RAG_AGENT_EXECUTOR
 
-    if chain_to_run is None:
-        print("Lỗi: RAG Chain chưa được khởi tạo.")
+    if agent_to_run is None:
+        print("Lỗi: Agent chưa được khởi tạo.")
         return
 
-    full_response = ""
+    # Config chứa session_id để truyền xuống Tool
     config_ = {"configurable": {"session_id": session_id, "user_id": user_id}}
     input_data = {"question": query_text}
 
     try:
-        for chunk in chain_to_run.stream(input_data, config=config_):
-            full_response += chunk
-            print(chunk, end="", flush=True)
+        # AgentExecutor trả về dict kết quả, ta lấy 'output'
+        result = agent_to_run.invoke(input_data, config=config_)
+        full_response = result.get("output", "Xin lỗi, tôi không thể xử lý yêu cầu này.")
+
+        print(full_response)
         print("\n")
-        # Lưu vào DB sau khi stream xong
+        # Lưu vào DB
         save_session_message(session_id, user_id, query_text, full_response)
     except Exception as e:
-        print(f"\nLỗi khi xử lý câu hỏi text: {e}")
+        print(f"\nLỗi khi Agent xử lý: {e}")
 
 
 def handle_multimodal_query(query_text, image_path, user_id, session_id="default_session"):
@@ -1125,13 +1114,13 @@ def handle_pdf_upload(pdf_path: str, session_id: str, user_id: str):
 # ==============================================================================
 
 def main():
-    print("🤖 Chatbot CUSC (MongoDB) sẵn sàng!")
+    print("🤖 Chatbot CUSC (Agent + MongoDB) sẵn sàng!")
     print("=" * 30)
     print("[1] Tạo session mới")
     print("[2] Tiếp tục session cũ")
 
     session_id = None
-    user_id = "69023a7b6c98b8abb985500a"
+    user_id = "6915f6a4d74b46caa1d4d0b2"
     choice = input("Lựa chọn của bạn (1 hoặc 2): ").strip()
 
     if choice == '2':
@@ -1201,4 +1190,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()  # Mai fix lại cho phép 1 file trùng có thể được upload ở nhiều session (có thể so sánh thêm với session_id)
