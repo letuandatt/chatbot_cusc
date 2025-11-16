@@ -1190,4 +1190,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  # Mai fix lại cho phép 1 file trùng có thể được upload ở nhiều session (có thể so sánh thêm với session_id)
+    main()
