@@ -306,23 +306,27 @@ def load_session_messages(session_id: str, user_id: str, max_history_message: in
             return history
 
         for msg in session_doc.get("messages", []):
-            if msg["role"] == "user":
-                image_gridfs_id_str = msg.get("image_gridfs_id")
-                content_list = [{"type": "text", "text": msg["content"]}]
-                if image_gridfs_id_str:
-                    try:
-                        image_id = ObjectId(image_gridfs_id_str)
-                        image_data = fs_client.get(image_id)  # Dùng fs_client
-                        image_base64 = base64.b64encode(image_data.read()).decode("utf-8")
-                        content_list.append(
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
-                    except Exception as ex:
-                        print(f"Lỗi khi tải ảnh từ GridFS (ID: {image_gridfs_id_str}): {ex}")
-                history.add_message(HumanMessage(content=content_list))
-            elif msg["role"] == "assistant":
-                history.add_message(AIMessage(content=msg["content"]))
-            else:
-                pass
+
+            # Nếu có question => user
+            if "question" in msg:
+                history.add_message(HumanMessage(content=msg["question"]))
+
+            # Nếu có answer => assistant
+            if "answer" in msg:
+                history.add_message(AIMessage(content=msg["answer"]))
+
+            # Nếu message có ảnh
+            image_gridfs_id_str = msg.get("image_gridfs_id")
+            if image_gridfs_id_str:
+                try:
+                    image_id = ObjectId(image_gridfs_id_str)
+                    image_data = fs_client.get(image_id)
+                    image_base64 = base64.b64encode(image_data.read()).decode("utf-8")
+                    history.add_message(HumanMessage(content=[
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+                    ]))
+                except Exception as ex:
+                    print(f"Lỗi khi tải ảnh từ GridFS (ID: {image_gridfs_id_str}): {ex}")
     except Exception as e:
         print(f"Lỗi khi tải session ({session_id}) từ MongoDB: {e}")
         return InMemoryChatMessageHistory()
